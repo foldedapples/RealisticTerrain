@@ -14,6 +14,7 @@ public final class RealisticTerrainMod implements ModInitializer {
     public static final RegistryKey<WorldPreset> PRESET_KEY = RegistryKey.of(RegistryKeys.WORLD_PRESET, id("realistic"));
     public static Identifier id(String path){ return Identifier.of(MOD_ID, path); }
     @Override public void onInitialize() {
+        Registry.register(Registries.BIOME_SOURCE, id("scaled"), com.cokedoutsnail.realisticterrain.worldgen.ScaledBiomeSource.CODEC);
         Registry.register(Registries.CHUNK_GENERATOR, id("realistic"), RealisticChunkGenerator.CODEC);
     }
 }

@@ -7,6 +7,6 @@ import java.util.Optional;
 
 public final class RealisticTerrainClient implements ClientModInitializer {
     @Override public void onInitializeClient(){
-        LevelScreenProvider.WORLD_PRESET_TO_SCREEN_PROVIDER.put(Optional.of(RealisticTerrainMod.PRESET_KEY), (parent, holder) -> new RealisticTerrainScreen(parent));
+        LevelScreenProvider.WORLD_PRESET_TO_SCREEN_PROVIDER.put(Optional.of(RealisticTerrainMod.PRESET_KEY), RealisticTerrainScreen::new);
     }
 }
