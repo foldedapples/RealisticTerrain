@@ -18,7 +18,8 @@ public interface LevelScreenProviderMixin {
         at = @At(
             value = "INVOKE",
             target = "Ljava/util/Map;of(Ljava/lang/Object;Ljava/lang/Object;Ljava/lang/Object;Ljava/lang/Object;)Ljava/util/Map;"
-        )
+        ),
+        require = 0
     )
     private static Map<Object, Object> realisticterrain$addPresetEditor(
         Object firstKey, Object firstValue, Object secondKey, Object secondValue
