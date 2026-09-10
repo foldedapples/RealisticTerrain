@@ -1,34 +1,82 @@
-# Realistic Terrain — Fabric 1.21.11
+# Realistic Terrain
 
-A source-first Fabric worldgen mod prototype for large, erosion-inspired terrain.
+A Fabric 1.21.11 world-generation mod for continent-scale mountain ranges, broad valleys, terraced foothills, winding river corridors, natural coasts, altitude-driven snow, and mountain caves.
 
-## Implemented
-- Custom selectable world preset: **Realistic Terrain**.
-- Maximum legal upper terrain coordinate for vanilla 1.21.11: Y=2031 (`min_y=-64`, total span 2096).
-- Large macro continents, mountain masks, ridged peaks, erosion channels and terraced foothills.
-- Wide warped river corridors that cut terrain below local height.
-- Snow-line gradient and temperature-assisted snow.
-- Beaches/coastal shelves, exposed stone on sharp ridges, caves integrated into the base fill.
-- Serialized generator parameters via codec.
-- Dedicated customization GUI and live top-down preview.
-- Ordinary vanilla chunk/section storage; no Voxy-specific storage hooks.
+## Status
 
-## Important implementation status
-This archive is an **alpha source implementation**, not a claimed production-tested release. The execution environment used to generate it has no outbound Maven/GitHub access, so Gradle dependencies could not be downloaded and the project could not be compiled against the live 1.21.11 mappings here.
+This repository contains a working **0.1.0 alpha**. It compiles against Minecraft 1.21.11, launches on Fabric Loader 0.19.5, loads its registries, creates a `realisticterrain:realistic` world, and serializes the custom generator into `level.dat`.
 
-The remaining integration item to validate during the first local compile is applying the GUI's `PENDING` `TerrainSettings` back into `WorldCreator`'s selected `DimensionOptions`. The preset and generator default values work data-driven; the screen and preview are present, but the Apply button currently stores the selected values client-side until that adapter is wired against the exact 1.21.11 `DimensionOptionsRegistryHolder` mutation API.
+The generator is intentionally source-first and experimental. Back up worlds before updating the mod; changing terrain settings after chunks exist will produce borders between old and new terrain.
+
+## Features
+
+- Selectable **Realistic Terrain** preset in Create World.
+- Dedicated customization screen with eleven sliders and a live 64×64 top-down preview.
+- Large-scale continental and mountain masks rather than repeated vanilla-sized hills.
+- Ridged peaks, erosion channels, exposed steep rock, terraced foothills, beaches, and coastal shelves.
+- Warped, connected river fields with configurable width, frequency, and carving depth.
+- Biome-coordinate scaling and biome-aware surface temperature/precipitation.
+- Soft snow-line probability instead of a hard horizontal cutoff.
+- Mountain caves generated without a custom chunk format.
+- Vanilla Nether and End dimensions.
+- Normal vanilla chunk sections and serialization for the safest practical Voxy interoperability.
+
+## Minecraft's height limit
+
+Minecraft 1.21.11 rejects any dimension where `min_y + height` exceeds **2032**. With `min_y = -64`, the largest valid aligned dimension is therefore:
+
+- Minimum build Y: `-64`
+- Maximum build Y: `2031`
+- Total vertical span: `2096` blocks
+
+That is the closest legal implementation to the requested Y=2040 target. Y=2040 itself cannot be made buildable by a normal Fabric world preset without replacing core chunk/coordinate assumptions, which would also be hostile to Voxy compatibility.
+
+## Customization
+
+Choose **Realistic Terrain** in the World Type selector, then open **Customize**.
+
+| Setting | Effect |
+| --- | --- |
+| Mountain height | Peak relief and maximum range height |
+| Mountain frequency | Spacing and density of ranges |
+| Ridge sharpness | Narrowness of ridgelines |
+| Erosion | Strength of erosion cuts and terraces |
+| River width | Width of connected river corridors |
+| River frequency | Drainage-network spacing |
+| River depth | Valley/canyon incision |
+| Snow line | Base permanent-snow altitude |
+| Biome scale | Horizontal size of vanilla biome regions |
+| Sea level | Ocean and river waterline |
+| Roughness | Fine terrain variation and cave threshold |
+
+Clicking **Apply** replaces the selected preset's Overworld generator with one containing the chosen settings. The generator codec writes those values into the world's generation data, so the same world reproduces them after rejoining.
 
 ## Build
-Requirements: JDK 21 and internet access for Gradle dependencies.
+
+Requirements: JDK 21 and an internet connection for the first dependency download.
 
 ```bash
 ./gradlew build
 ```
 
-Output: `build/libs/realistic-terrain-0.1.0.jar`
+The distributable jar is created in `build/libs/`.
 
-## Voxy
-The generator writes normal `Chunk` sections and does not replace chunk storage/rendering. This is deliberately safer for Voxy. Extended vertical span must still be tested with the exact Voxy build you intend to ship because Voxy itself can impose implementation-specific limits independent of vanilla's world format.
+## Development test
 
-## Water color
-Depth-based turquoise-to-blue water cannot be represented faithfully by server worldgen alone because vanilla water tint is biome-based, not per-block depth based. This project shapes shallow/deep channels correctly. Exact depth-graded coloration should be supplied by a companion client renderer/resource-pack/shader module rather than baking non-vanilla water blocks into world data.
+```bash
+./gradlew runServer --args nogui
+```
+
+For an automated local smoke test, set `level-type=realisticterrain:realistic` in `run/server.properties`, accept the Minecraft EULA in `run/eula.txt`, and start the development server.
+
+## Voxy compatibility
+
+Realistic Terrain does not replace chunk storage, sections, palettes, heightmaps, or the client renderer. Voxy can consume the resulting ordinary chunks. The unusually tall dimension increases LoD memory and generation work, so use a current Voxy build that explicitly supports Minecraft 1.21.11 and test the chosen LoD distance before distributing a pack.
+
+## Water color note
+
+The terrain generator creates shallow shelves and deep channels. Vanilla water tint is biome-based rather than depth-based, so exact turquoise-to-deep-blue grading belongs in a client shader or rendering module. The generator does not substitute fake water blocks that would break survival behavior or LoD renderers.
+
+## License
+
+MIT

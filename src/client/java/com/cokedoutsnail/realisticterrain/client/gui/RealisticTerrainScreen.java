@@ -1,6 +1,9 @@
 package com.cokedoutsnail.realisticterrain.client.gui;
 
 import com.cokedoutsnail.realisticterrain.worldgen.TerrainSettings;
+import com.cokedoutsnail.realisticterrain.worldgen.RealisticChunkGenerator;
+import com.cokedoutsnail.realisticterrain.worldgen.ScaledBiomeSource;
+import net.minecraft.client.world.GeneratorOptionsHolder;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.screen.world.CreateWorldScreen;
@@ -9,8 +12,13 @@ import net.minecraft.text.Text;
 
 /** Client editor. Values update the preview immediately; applying stores the settings for the selected preset. */
 public final class RealisticTerrainScreen extends Screen {
-    private final CreateWorldScreen parent; private TerrainSettings s=TerrainSettings.DEFAULT; private long previewSeed=0x5245414c49535449L;
-    public RealisticTerrainScreen(CreateWorldScreen parent){ super(Text.translatable("realisticterrain.customize.title")); this.parent=parent; }
+    private final CreateWorldScreen parent; private TerrainSettings s; private long previewSeed=0x5245414c49535449L;
+    public RealisticTerrainScreen(CreateWorldScreen parent, GeneratorOptionsHolder holder){
+        super(Text.translatable("realisticterrain.customize.title"));
+        this.parent=parent;
+        this.s = holder.selectedDimensions().getChunkGenerator() instanceof RealisticChunkGenerator generator
+                ? generator.settings() : TerrainSettings.DEFAULT;
+    }
     private TerrainSettings set(int idx,double v){ float f=(float)v; return switch(idx){
         case 0->new TerrainSettings(f,s.mountainFrequency(),s.ridgeSharpness(),s.erosionIntensity(),s.riverWidth(),s.riverFrequency(),s.riverDepth(),s.snowLine(),s.biomeScale(),s.seaLevel(),s.roughness(),s.seedSalt());
         case 1->new TerrainSettings(s.mountainHeight(),f,s.ridgeSharpness(),s.erosionIntensity(),s.riverWidth(),s.riverFrequency(),s.riverDepth(),s.snowLine(),s.biomeScale(),s.seaLevel(),s.roughness(),s.seedSalt());
@@ -36,7 +44,18 @@ public final class RealisticTerrainScreen extends Screen {
         addDrawableChild(new DoubleSlider(x,y+g*9,w,"Sea level",-32,512,s.seaLevel(),v->s=set(9,v)));
         addDrawableChild(new DoubleSlider(x,y+g*10,w,"Roughness",.2,3,s.roughness(),v->s=set(10,v)));
         addDrawableChild(ButtonWidget.builder(Text.translatable("realisticterrain.customize.reset"),b->{s=TerrainSettings.DEFAULT; clearAndInit();}).dimensions(20,height-28,100,20).build());
-        addDrawableChild(ButtonWidget.builder(Text.translatable("realisticterrain.customize.done"),b->{RealisticTerrainClientState.PENDING=s; client.setScreen(parent);}).dimensions(width-120,height-28,100,20).build());
+        addDrawableChild(ButtonWidget.builder(Text.translatable("realisticterrain.customize.done"),b->{
+            TerrainSettings applied = s;
+            parent.getWorldCreator().applyModifier((registries, dimensions) -> {
+                var oldGenerator = dimensions.getChunkGenerator();
+                var biomeSource = oldGenerator.getBiomeSource();
+                if (biomeSource instanceof ScaledBiomeSource scaled) {
+                    biomeSource = scaled.withScale(applied.biomeScale());
+                }
+                return dimensions.with(registries, new RealisticChunkGenerator(biomeSource, applied));
+            });
+            client.setScreen(parent);
+        }).dimensions(width-120,height-28,100,20).build());
     }
     @Override public void render(DrawContext ctx,int mouseX,int mouseY,float delta){ super.render(ctx,mouseX,mouseY,delta); ctx.drawCenteredTextWithShadow(textRenderer,title,width/2,14,0xFFFFFF); int px=270,py=42,pw=Math.max(160,width-px-20),ph=Math.max(180,height-90); TerrainPreview.render(ctx,px,py,pw,ph,previewSeed,s); ctx.drawTextWithShadow(textRenderer,Text.translatable("realisticterrain.customize.preview"),px,py-14,0xFFFFFF); }
     @Override public void close(){ client.setScreen(parent); }
