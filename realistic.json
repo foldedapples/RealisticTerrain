@@ -1,0 +1,39 @@
+{
+  "dimensions": {
+    "minecraft:overworld": {
+      "type": "realisticterrain:overworld",
+      "generator": {
+        "type": "realisticterrain:realistic",
+        "biome_source": { "type": "minecraft:multi_noise", "preset": "minecraft:overworld" },
+        "mountain_height": 1.0,
+        "mountain_frequency": 1.0,
+        "ridge_sharpness": 1.0,
+        "erosion_intensity": 1.0,
+        "river_width": 1.0,
+        "river_frequency": 1.0,
+        "river_depth": 1.0,
+        "snow_line": 430,
+        "biome_scale": 1.0,
+        "sea_level": 96,
+        "roughness": 1.0,
+        "seed_salt": 0
+      }
+    },
+    "minecraft:the_nether": {
+      "type": "minecraft:the_nether",
+      "generator": {
+        "type": "minecraft:noise",
+        "biome_source": { "type": "minecraft:multi_noise", "preset": "minecraft:nether" },
+        "settings": "minecraft:nether"
+      }
+    },
+    "minecraft:the_end": {
+      "type": "minecraft:the_end",
+      "generator": {
+        "type": "minecraft:noise",
+        "biome_source": { "type": "minecraft:the_end" },
+        "settings": "minecraft:end"
+      }
+    }
+  }
+}
