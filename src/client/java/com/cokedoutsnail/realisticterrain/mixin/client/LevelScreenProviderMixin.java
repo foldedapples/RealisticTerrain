@@ -12,7 +12,7 @@ import java.util.Map;
 import java.util.Optional;
 
 @Mixin(LevelScreenProvider.class)
-public interface LevelScreenProviderMixin {
+public abstract class LevelScreenProviderMixin {
     @Redirect(
         method = "<clinit>",
         at = @At(
