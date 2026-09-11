@@ -3,7 +3,7 @@
   "id": "realisticterrain",
   "version": "${version}",
   "name": "Realistic Terrain",
-  "description": "Plate-tectonic world generation: folded mountain ranges, rift valleys, hydrological canyons, geological rock strata, terrain-matched biomes and slope-aware forests, with a configurable world preset.",
+  "description": "Plate-tectonic world generation: folded mountain ranges, rift valleys, hydrological canyons, geological rock strata, terrain-matched biomes and slope-aware forests, with a configurable world preset and live heightmap preview.",
   "authors": ["cokedoutsnail"],
   "contributors": [
     {

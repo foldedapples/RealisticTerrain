@@ -160,9 +160,18 @@ public final class RealisticChunkGenerator extends ChunkGenerator {
             double band=Noise2D.value(x/17.0,(z + y*1.25)/17.0,seed+1009);
             return band>0.15?Blocks.SANDSTONE.getDefaultState():Blocks.STONE.getDefaultState();
         }
-        // 4. Surface and subsoil.
-        if(depth==0) return wet?Blocks.GRASS_BLOCK.getDefaultState():Blocks.COARSE_DIRT.getDefaultState();
-        if(depth<=3) return wet?Blocks.DIRT.getDefaultState():Blocks.COARSE_DIRT.getDefaultState();
+        // 4. Surface and subsoil (soil depth from hydraulic erosion).
+        // Rich soil (high values) → deep dirt/grass (lush biomes, fertile valleys).
+        // Stripped soil (low values) → exposed rock/gravel (scree, peaks, eroded canyon walls).
+        double soil = sm.soil();
+        int soilDepth = (int)(soil * 5.0); // 0-5 blocks of soil
+        if(depth==0){
+            if(soil < 0.15 && sm.slopeHint() > 0.3) return Blocks.GRAVEL.getDefaultState(); // scree
+            if(soil < 0.3) return Blocks.STONE.getDefaultState(); // exposed bedrock
+            return wet?Blocks.GRASS_BLOCK.getDefaultState():Blocks.COARSE_DIRT.getDefaultState();
+        }
+        if(depth <= soilDepth) return wet?Blocks.DIRT.getDefaultState():Blocks.COARSE_DIRT.getDefaultState();
+        if(depth <= soilDepth + 1) return Blocks.DIRT.getDefaultState(); // transition layer
         return Blocks.STONE.getDefaultState();
     }
     private static double pseudo(int a,int b){ long h=(a*0x9E3779B97F4A7C15L)^(b*0xC2B2AE3D27D4EB4FL); h^=h>>>29; return (h&0xffff)/65535.0; }
@@ -238,7 +247,9 @@ public final class RealisticChunkGenerator extends ChunkGenerator {
             double flatness=clamp01(1.0 - (slope-0.30)/1.2);
             // Forests come in patches (cluster noise), not uniform sprinkles.
             double cluster=0.42+0.35*Noise2D.value(x/300.0, z/300.0, seed+977);
-            double chance=settings.vegetationDensity()*0.24f*flatness*cluster;
+            // Rich deposited soil supports denser stands; stripped erosion leaves bare ground.
+            double soilFactor = 0.6 + 0.8 * sm.soil();
+            double chance=settings.vegetationDensity()*0.24f*flatness*cluster*soilFactor;
             if(random.nextFloat() > chance) continue;
             int y=chunk.sampleHeightmap(Heightmap.Type.WORLD_SURFACE_WG,lx,lz)+1;
             configured.getOptionalValue(RegistryKey.of(RegistryKeys.CONFIGURED_FEATURE, species)).ifPresent(f ->
@@ -248,20 +259,28 @@ public final class RealisticChunkGenerator extends ChunkGenerator {
 
     private static double clamp01(double v){ return v<0?0:(v>1?1:v); }
 
-    /** Chooses a vanilla tree placed-feature id (or null for no tree) from terrain climate + slope. */
+    /** Chooses a vanilla tree placed-feature id (or null for no tree) from terrain climate, slope and soil. */
     private static Identifier treeSpecies(TerrainModel.Sample sm,TerrainSettings s,double slope){
         double h=sm.height(), w=sm.waterLevel();
         if(h<w+2) return null;                            // below the waterline
         if(sm.river()>0.2 || sm.lake()>0.2) return null;  // in a channel or lake
         if(slope>0.62) return null;                       // steep canyon walls / scree / peaks
         if(h>s.snowLine()+40) return null;                // above the tree line
+        // Stripped soil (eroded slopes, scree): no trees even where the climate would allow them.
+        if(sm.soil() < 0.3) return null;
         double m=sm.moisture(), t=sm.temperature();
+        // Rich deposited soil triggers lush forests where the climate is warm and wet enough.
+        boolean fertile = sm.soil() > 0.65;
         if(t<-.2){
             if(m<-.1) return null;
             return Identifier.ofVanilla("trees_taiga");
         }
-        if(t>.35 && m>.1) return Identifier.ofVanilla("trees_sparse_jungle");
-        if(m>.25) return t>.25?Identifier.ofVanilla("trees_birch"):Identifier.ofVanilla("trees_birch_and_oak_leaf_litter");
+        if(t>.35 && m>.1) return fertile
+                ? Identifier.ofVanilla("trees_jungle")
+                : Identifier.ofVanilla("trees_sparse_jungle");
+        if(m>.25) return t>.25
+                ? Identifier.ofVanilla("trees_birch")
+                : Identifier.ofVanilla("trees_birch_and_oak_leaf_litter");
         if(m>.12) return Identifier.ofVanilla("trees_birch_and_oak_leaf_litter");
         if(m<-.15) return null; // desert
         if(t>.3) return Identifier.ofVanilla("trees_savanna");

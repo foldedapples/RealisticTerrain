@@ -49,6 +49,11 @@ java {
 
 test {
     useJUnitPlatform()
+    // The terrain sweeps walk tens of thousands of columns and the hydraulic erosion pass keeps a
+    // bounded region cache on top of that. Gradle's default worker heap (512 MB) is not enough for
+    // the full suite, and the failure surfaces as "Could not stop all services" rather than as a
+    // readable OutOfMemoryError, so the heap is set explicitly here.
+    maxHeapSize = '1g'
 }
 
 // ---------------------------------------------------------------------------

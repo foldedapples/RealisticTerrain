@@ -32,11 +32,23 @@ public final class TerrainModel {
             double plates,      // 0..1 tectonic plate identity at this column
             double convergent,  // 0..1 collision-margin strength (orogeny host)
             double divergent,   // 0..1 rift-margin strength (valley/trench host)
-            double fault        // 0..1 proximity to an active plate margin
+            double fault,       // 0..1 proximity to an active plate margin
+            double soil         // 0..1 soil depth from hydraulic erosion (0=bedrock, 1=deep soil)
     ) {}
 
     /** Probe distance, in blocks, for the drainage field's gradient and the fall-line slope. */
     private static final double RIVER_PROBE = 28.0;
+
+    /**
+     * Mapping from the droplet pass's water traffic onto the climate moisture field. {@code FLOOR} is
+     * the traffic the median column sees (measured at 0.028), so anything at or below it contributes
+     * nothing and the biome thresholds keep their existing meaning; {@code BOOST} then scales the
+     * excess so a main drainage line (measured p99 traffic 0.26) adds roughly +0.35 of moisture -
+     * enough to turn an arid plain into a gallery forest without drowning the climate that put it
+     * there. It is deliberately one-sided: water running across ground can only ever make it wetter.
+     */
+    private static final double MOISTURE_FLOOR = 0.028;
+    private static final double MOISTURE_BOOST = 1.5;
 
     /**
      * Half-width of a river's <em>flat</em> bed, in blocks, at {@code riverWidth = 1}. It is scaled
@@ -175,9 +187,15 @@ public final class TerrainModel {
     }
 
     public static Sample sample(long seed, double x, double z, TerrainSettings s) {
+        long worldSeed = seed;
         seed ^= s.seedSalt();
         TerrainCache.Node c = TerrainCache.sample(x, z, seed, s);
         double hSmooth = tectonicBase(x, z, s, c);
+
+        // --- hydraulic erosion: droplet-based gully carving and valley filling ---
+        // The pass skips itself at zero erosion intensity (see HydraulicErosion.sample), so that
+        // slider position costs nothing and leaves the tectonic fall line exactly as it was.
+        HydraulicErosion.Field hydro = HydraulicErosion.sample(x, z, worldSeed, s);
 
         // --- fine texture at full resolution (not cached, cheap) ---
         double erosion = Noise2D.fbm(x / 430.0, z / 430.0, seed + 83, 4, 2.11, .52);
@@ -200,7 +218,11 @@ public final class TerrainModel {
         // Eroded fall line. Every channel below is cut into this surface, and it is the only height
         // the channel model is allowed to read. It stays in double precision all the way down to the
         // single floor() in RealisticChunkGenerator#populateNoise, which is where a block is placed.
-        double h0 = hSmooth - Math.abs(erosion) * ridge * 42.0 * s.erosionIntensity() - canyon;
+        // The droplet pass contributes a delta that is already in blocks and already clamped at its
+        // source, so the Erosion slider is the only thing scaling it here - and at zero the pass
+        // contributes nothing at all.
+        double h0 = hSmooth - Math.abs(erosion) * ridge * 42.0 * s.erosionIntensity() - canyon
+                  + hydro.delta() * s.erosionIntensity();
 
         // --- river corridor: a graded (Hermite) channel, ReTerraForged style ---
         // The previous model subtracted depth along a LINEAR tent, max(0, 1 - |field| / (0.06 * w)),
@@ -307,13 +329,21 @@ public final class TerrainModel {
         double waterColumn = riverAnchor * RIVER_WATER_FILL + lakeAnchor * LAKE_WATER_FILL;
         double inlandWater = Math.max(s.seaLevel(), h0 - riverAnchor - lakeAnchor + waterColumn);
 
-        double moisture = Noise2D.fbm(x / (1700.0 * s.biomeScale()), z / (1700.0 * s.biomeScale()), seed + 191, 4, 2, .5);
+        double climateMoisture = Noise2D.fbm(x / (1700.0 * s.biomeScale()), z / (1700.0 * s.biomeScale()), seed + 191, 4, 2, .5);
+        // Drainage traffic can only ADD moisture. A stream through an arid plain is an oasis; it never
+        // dries anything out, and it must not silently rewrite the climate either, because the biome
+        // thresholds downstream are tuned to the climate field's own scale. So the bonus only starts at
+        // the measured median traffic: ordinary ground that merely drains towards somewhere else is
+        // left exactly as the climate set it, and only the channels and the slopes feeding them get
+        // wetter. That is the Phase-5 rule - lush where the water ran, sparse where it did not.
+        double moisture = clamp(climateMoisture
+                + Math.max(0.0, hydro.moisture() - MOISTURE_FLOOR) * MOISTURE_BOOST, -1.0, 1.0);
         double temperature = Noise2D.fbm(x / (2200.0 * s.biomeScale()), z / (2200.0 * s.biomeScale()), seed + 211, 4, 2, .5)
                 - Math.max(0, h0 - 250) / 1650.0;
         double slopeHint = clamp(Math.abs(erosion) * (0.4 + 0.6 * ridge));
 
         return new Sample(h, inlandWater, river, lake, ridge, moisture, temperature, slopeHint,
-                c.plates(), c.convergent(), c.divergent(), c.fault());
+                c.plates(), c.convergent(), c.divergent(), c.fault(), hydro.soil());
     }
 
     public static boolean cave(long seed, int x, int y, int z, TerrainSettings s) {
