@@ -29,7 +29,7 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
 public final class RealisticChunkGenerator extends ChunkGenerator {
-    public static final int MIN_Y=-64, MAX_Y=2031, WORLD_HEIGHT=2096;
+    public static final int MIN_Y=-64, WORLD_HEIGHT=2096;
     public static final MapCodec<RealisticChunkGenerator> CODEC = RecordCodecBuilder.mapCodec(i -> i.group(
             BiomeSource.CODEC.fieldOf("biome_source").forGetter(RealisticChunkGenerator::getBiomeSource),
             TerrainSettings.CODEC.fieldOf("settings").forGetter(RealisticChunkGenerator::settings)
