@@ -15,6 +15,7 @@ The generator is intentionally source-first and experimental. Back up worlds bef
 - Large-scale continental and mountain masks rather than repeated vanilla-sized hills.
 - Ridged peaks, erosion channels, exposed steep rock, terraced foothills, beaches, and coastal shelves.
 - Warped, connected river fields with configurable width, frequency, and carving depth.
+- Rivers enforce a fall line: corridors only carve where they run downhill inside valleys, so channels meander from headwater to coast, taper out of the high ranges, and never slice through ridgelines - plus basin-only lakes.
 - Biome-coordinate scaling and biome-aware surface temperature/precipitation.
 - Soft snow-line probability instead of a hard horizontal cutoff.
 - Mountain caves generated without a custom chunk format.
