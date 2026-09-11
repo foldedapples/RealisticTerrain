@@ -186,14 +186,19 @@ public final class TerrainModel {
         double collision = c.convergent();
         double orogeny = Math.pow(c.belt(), 0.30 + 0.45 * s.ridgeSharpness());
         double collisionMask = collision * clamp(0.35 + 0.65 * c.plates());
-        double range = orogeny * collisionMask * 560.0 * s.mountainHeight();
+        // tectonic_activity scales everything the margins do - uplift, trenching and rifting alike - so
+        // it is the single knob for "how active is this world's tectonics".
+        double activity = s.tectonicActivity();
+        double range = orogeny * collisionMask * 560.0 * s.mountainHeight() * activity;
         // Divergent margins: ocean trenches below sea level, continental rifts carved into valleys.
-        double trench = clamp(-continent) * c.divergent() * 95.0 * s.riverDepth();
-        double continentalRift = clamp(continent) * c.divergent() * 60.0 * Math.max(1.0, s.canyonDepth()) * (0.6 + 0.4 * c.fault());
-        // Broad macro highs and soft foothill aprons around the ranges.
+        double trench = clamp(-continent) * c.divergent() * 95.0 * s.riverDepth() * activity;
+        double continentalRift = clamp(continent) * c.divergent() * 60.0 * Math.max(1.0, s.canyonDepth())
+                * (0.6 + 0.4 * c.fault()) * activity;
+        // Broad macro highs and soft foothill aprons around the ranges. mountain_uplift scales these,
+        // which is what makes a range a massif rather than a ridge: it lifts the whole shoulder.
         double foothills = clamp((c.macro() - 0.02) / 0.60) * (1.0 - collisionMask);
-        double h = craton + oceanBasin + c.macro() * 40.0 + foothills * 95.0 * s.mountainHeight()
-                + range - trench - continentalRift;
+        double uplift = (c.macro() * 40.0 + foothills * 95.0 * s.mountainHeight()) * s.mountainUplift();
+        double h = craton + oceanBasin + uplift + range - trench - continentalRift;
         return clamp(h, MIN_SURFACE, maxSurface(s));
     }
 
@@ -239,8 +244,11 @@ public final class TerrainModel {
         HydraulicErosion.Field hydro = HydraulicErosion.sample(x, z, worldSeed, s);
 
         // --- fine texture at full resolution (not cached, cheap) ---
-        double erosion = Noise2D.fbm(x / 430.0, z / 430.0, seed + 83, 4, 2.11, .52);
-        double ridgeDetail = clamp((Noise2D.fbm(x / 200.0, z / 200.0, seed + 223, 3, 2.15, .5) + 1.0) * 0.5);
+        // roughness scales the fine detail only; at its default of 1 this is exactly 1, so the
+        // reference terrain is unchanged.
+        double roughnessGain = 0.6 + 0.4 * s.roughness();
+        double erosion = Noise2D.fbm(x / 430.0, z / 430.0, seed + 83, 4, 2.11, .52) * roughnessGain;
+        double ridgeDetail = clamp((Noise2D.fbm(x / 200.0, z / 200.0, seed + 223, 3, 2.15, .5) * roughnessGain + 1.0) * 0.5);
         double ridge = Math.min(1.0, Math.pow(c.belt(), 0.5 + 0.6 * s.ridgeSharpness()) * (0.6 + 0.4 * ridgeDetail));
 
         // --- drainage network: real flow accumulation, order, basins and wetlands ---
@@ -350,6 +358,46 @@ public final class TerrainModel {
 
         return new Sample(h, inlandWater, river, lake, ridge, moisture, temperature, slopeHint,
                 c.plates(), c.convergent(), c.divergent(), c.fault(), hydro.soil(), c.continent());
+    }
+
+    /**
+     * Soft climatic snow coverage at a column: 0 below the snow line, 1 above it, with climate, slope
+     * exposure and a per-column hash shaping the transition so the edge is ragged rather than a
+     * horizontal cutoff.
+     *
+     * <p>The chunk generator asks this instead of recomputing the blend, which is what makes the rule
+     * a single source of truth - and testable without a live world.
+     */
+    public static double snowCover(int x, int z, double surface, TerrainSettings s, Sample sm, boolean cold) {
+        double shelter = 1.0 - clamp(sm.slopeHint() * 1.4);   // wind-scoured faces hold less snow
+        double humid = clamp(sm.moisture() * 0.5 + 0.5);      // and dry air holds less still
+        double snowFade = (surface - s.snowLine()) / 115.0 + (cold ? 0.55 : 0.0)
+                + 0.20 * shelter + 0.30 * (humid - 0.5);
+        if (snowFade <= 0) return 0.0;
+        return columnHash(x, z) < Math.min(1.0, snowFade) ? 1.0 : 0.0;
+    }
+
+    /**
+     * Probability that a tree is planted at a column: vegetation density scaled by how flat and
+     * sheltered the spot is, how rich its soil is, and a large-scale patchiness field so forests come
+     * in stands rather than a uniform sprinkle.
+     *
+     * <p>Public for the same reason the snowline is: the chunk generator's feature pass calls this
+     * instead of recomputing the blend, so the density slider has one definition and can be tested
+     * without a live world.
+     */
+    public static double treeChance(long seed, double x, double z, Sample sm, double slope, TerrainSettings s) {
+        double flatness = clamp(1.0 - (slope - 0.30) / 1.2);
+        double cluster = 0.42 + 0.35 * Noise2D.value(x / 300.0, z / 300.0, seed + 977);
+        double soilFactor = 0.6 + 0.8 * sm.soil();
+        return s.vegetationDensity() * 0.24 * flatness * cluster * soilFactor;
+    }
+
+    /** Deterministic per-column value in [0,1); the same hash the surface rules have always used. */
+    private static double columnHash(int x, int z) {
+        long h = (x * 0x9E3779B97F4A7C15L) ^ (z * 0xC2B2AE3D27D4EB4FL);
+        h ^= h >>> 29;
+        return (h & 0xFFFF) / 65535.0;
     }
 
     public static boolean cave(long seed, int x, int y, int z, TerrainSettings s) {

@@ -122,6 +122,9 @@ public enum TerrainSetting {
     public boolean integral() { return integral; }
     public String tooltip() { return tooltip; }
 
+    /** The middle of this setting's range, rounded like the setting itself. */
+    public double midpoint() { return clamp((min + max) * 0.5); }
+
     /** Translation key for the setting's display name. */
     public String nameKey() { return "realisticterrain.setting." + jsonKey; }
     /** Translation key for the setting's tooltip. */

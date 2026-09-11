@@ -152,14 +152,13 @@ public final class RealisticChunkGenerator extends ChunkGenerator {
             return Blocks.STONE.getDefaultState();
         }
         // Snowline.
-        // Snowline: a soft climatic blend rather than a horizontal cutoff. Altitude carries most of
-        // it, climate carries the rest (cold biomes snow lower), steep exposed faces hold less snow
-        // than sheltered ones, and the per-column hash makes the edge ragged.
-        double shelter = 1.0 - clamp01(sm.slopeHint() * 1.4);
-        double humid = clamp01(sm.moisture() * 0.5 + 0.5);
-        double snowFade = (surface - settings.snowLine()) / 115.0 + (cold ? .55 : 0)
-                + 0.20 * shelter + 0.30 * (humid - 0.5);
-        if(depth==0 && snowFade>0 && pseudo(x,z)<Math.min(1,snowFade)) return Blocks.SNOW_BLOCK.getDefaultState();
+        // Snowline: a soft climatic blend rather than a horizontal cutoff. Altitude carries most of it,
+        // climate carries the rest (cold biomes snow lower), steep exposed faces hold less snow than
+        // sheltered ones, and the per-column hash makes the edge ragged. The rule itself lives in
+        // TerrainModel so it has one definition and can be tested without a live world.
+        if(depth==0 && TerrainModel.snowCover(x, z, surface, settings, sm, cold) >= 0.5) {
+            return Blocks.SNOW_BLOCK.getDefaultState();
+        }
         // Exposed bedrock on steep, high, ridged slopes (scree, peaks).
         if(sm.ridge()>.72 && sm.slopeHint()>.42) return Blocks.STONE.getDefaultState();
         // Dry sand, restricted to the coast and to real desert. The coastal arm only needs a small
@@ -300,13 +299,9 @@ public final class RealisticChunkGenerator extends ChunkGenerator {
             double slope=TerrainModel.geomorphSlope(seed,x,z,settings);
             Identifier species=treeSpecies(sm,settings,slope);
             if(species==null) continue;
-            // Flat valley floors hold dense forest; steep walls and peaks hold none.
-            double flatness=clamp01(1.0 - (slope-0.30)/1.2);
-            // Forests come in patches (cluster noise), not uniform sprinkles.
-            double cluster=0.42+0.35*Noise2D.value(x/300.0, z/300.0, seed+977);
-            // Rich deposited soil supports denser stands; stripped erosion leaves bare ground.
-            double soilFactor = 0.6 + 0.8 * sm.soil();
-            double chance=settings.vegetationDensity()*0.24f*flatness*cluster*soilFactor;
+            // Flat valley floors hold dense forest; steep walls and peaks hold none. The rule itself
+            // lives in TerrainModel so the density slider has one definition and can be tested.
+            double chance = TerrainModel.treeChance(seed, x, z, sm, slope, settings);
             if(random.nextFloat() > chance) continue;
             int y=chunk.sampleHeightmap(Heightmap.Type.WORLD_SURFACE_WG,lx,lz)+1;
             configured.getOptionalValue(RegistryKey.of(RegistryKeys.CONFIGURED_FEATURE, species)).ifPresent(f ->

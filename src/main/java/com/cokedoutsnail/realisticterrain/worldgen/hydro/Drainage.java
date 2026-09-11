@@ -385,7 +385,10 @@ public final class Drainage {
         final double sea = s.seaLevel();
         final double density = Math.max(0.05, s.riverDensity());
         final double trib = Math.log1p(Math.max(0.0, s.tributaryDensity()));
-        final double minArea = CHANNEL_AREA / density;
+        // How much water the network carries. river_density sets how many networks exist, river_spacing
+        // and drainage_scale tune how much catchment a channel needs before it appears.
+        final double minArea = CHANNEL_AREA
+                / (density * Math.max(0.25, s.riverFrequency()) * Math.max(0.25, s.drainageScale()));
         final double logMin = Math.log1p(minArea);
         // A closed basin is only a lake if it is genuinely deep AND has a catchment feeding it. The
         // priority-flood raises EVERY depression, including the countless one- and two-block hollows

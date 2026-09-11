@@ -186,14 +186,18 @@ public final class TerrainCache {
         double px = x + warpX * PLATE_WARP;
         double pz = z + warpZ * PLATE_WARP;
         CellularNoise.Cell plate = CellularNoise.sample(
-                px / PLATE_SCALE, pz / PLATE_SCALE, seed + 31, CellularNoise.DEFAULT_SHAPE);
+                px / (PLATE_SCALE / s.plateScale()), pz / (PLATE_SCALE / s.plateScale()),
+                seed + 31, CellularNoise.DEFAULT_SHAPE);
         // Orogeny/rift strength: proximity to the nearest margin, 0 deep inside a plate and 1 on the
         // margin itself. The 0.30 divisor used to confine this to a thin sliver right on the
         // boundary, so orogeny (see TerrainModel#tectonicBase) had nowhere to put a foothill or
         // shoulder - only a narrow band that could reach full amplitude. Widening it to 0.55 spreads
         // the same margin over a proportionally bigger swath of each plate, which is what turns a
         // "too tiny" spike into an actual range with real extent.
-        double margin = sstep(clamp((0.42 - plate.boundary()) / 0.55));
+        // mountain_range_width widens the swath of each plate that carries folded terrain, so it
+        // trades a narrow ridge line for a broad belt of foothills and shoulders without touching the
+        // peak amplitude (that is mountain_height's job).
+        double margin = sstep(clamp((0.42 - plate.boundary()) / (0.55 * s.mountainRangeWidth())));
         // Whether a margin collides (fold belt) or separates (rift, ocean trench) is read from a
         // smooth *world-space* field, so a boundary keeps one tectonic style over long stretches
         // while the switch between styles is a gradual change, never a cliff. A hash of the plate

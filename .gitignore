@@ -2,6 +2,7 @@
 build/
 run/
 out/
+bin/
 .idea/
 .wrappergen/
 .build-patches/
