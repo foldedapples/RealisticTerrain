@@ -18,9 +18,11 @@ public record TerrainSettings(
         int seaLevel,
         float roughness,
         float vegetationDensity,
+        float continentalScale,
+        float canyonDepth,
         long seedSalt
 ) {
-    public static final TerrainSettings DEFAULT = new TerrainSettings(1f,1f,1f,1f,1f,1f,1f,430,1f,96,1f,1f,0L);
+    public static final TerrainSettings DEFAULT = new TerrainSettings(1f, 1f, 1f, 1f, 1f, 1f, 1f, 430, 1f, 96, 1f, 1f, 1f, 1f, 0L);
 
     public static final Codec<TerrainSettings> CODEC = RecordCodecBuilder.create(i -> i.group(
             Codec.floatRange(0.25f, 3.0f).fieldOf("mountain_height").forGetter(TerrainSettings::mountainHeight),
@@ -35,6 +37,8 @@ public record TerrainSettings(
             Codec.intRange(-32, 512).fieldOf("sea_level").forGetter(TerrainSettings::seaLevel),
             Codec.floatRange(0.2f, 3.0f).fieldOf("roughness").forGetter(TerrainSettings::roughness),
             Codec.floatRange(0.0f, 3.0f).optionalFieldOf("vegetation_density", 1.0f).forGetter(TerrainSettings::vegetationDensity),
+            Codec.floatRange(0.5f, 2.5f).optionalFieldOf("continental_scale", 1.0f).forGetter(TerrainSettings::continentalScale),
+            Codec.floatRange(0.0f, 2.5f).optionalFieldOf("canyon_depth", 1.0f).forGetter(TerrainSettings::canyonDepth),
             Codec.LONG.optionalFieldOf("seed_salt", 0L).forGetter(TerrainSettings::seedSalt)
     ).apply(i, TerrainSettings::new));
 
@@ -42,10 +46,10 @@ public record TerrainSettings(
     public record Profile(String nameKey, TerrainSettings settings) {}
 
     public static final List<Profile> PROFILES = List.of(
-            new Profile("realisticterrain.profile.continental", new TerrainSettings(1.0f,0.9f,0.9f,1.0f,1.0f,0.8f,1.0f,430,1.1f,96,1.0f,1.0f,0L)),
-            new Profile("realisticterrain.profile.alpine",      new TerrainSettings(2.2f,0.7f,1.5f,1.3f,0.8f,0.9f,1.2f,360,1.0f,96,1.0f,0.7f,0L)),
-            new Profile("realisticterrain.profile.archipelago", new TerrainSettings(0.9f,1.3f,0.8f,1.1f,1.2f,1.2f,1.0f,430,1.2f,76,1.0f,1.2f,0L)),
-            new Profile("realisticterrain.profile.rolling",     new TerrainSettings(0.55f,1.1f,0.6f,0.8f,1.1f,1.0f,0.8f,500,1.0f,96,0.8f,1.3f,0L)),
-            new Profile("realisticterrain.profile.canyons",     new TerrainSettings(1.4f,0.8f,1.2f,2.2f,1.4f,0.9f,2.2f,480,0.9f,96,1.1f,0.6f,0L))
+            new Profile("realisticterrain.profile.continental", new TerrainSettings(1.0f, 0.9f, 0.9f, 1.0f, 1.0f, 0.8f, 1.0f, 430, 1.1f, 96, 1.0f, 1.0f, 1.0f, 1.0f, 0L)),
+            new Profile("realisticterrain.profile.alpine",      new TerrainSettings(2.2f, 0.7f, 1.5f, 1.3f, 0.8f, 0.9f, 1.2f, 360, 1.0f, 96, 1.0f, 0.7f, 1.0f, 0.9f, 0L)),
+            new Profile("realisticterrain.profile.archipelago", new TerrainSettings(0.9f, 1.3f, 0.8f, 1.1f, 1.2f, 1.2f, 1.0f, 430, 1.2f, 76, 1.0f, 1.2f, 0.8f, 1.0f, 0L)),
+            new Profile("realisticterrain.profile.rolling",     new TerrainSettings(0.55f, 1.1f, 0.6f, 0.8f, 1.1f, 1.0f, 0.8f, 500, 1.0f, 96, 0.8f, 1.3f, 1.1f, 0.6f, 0L)),
+            new Profile("realisticterrain.profile.canyons",     new TerrainSettings(1.4f, 0.8f, 1.2f, 2.2f, 1.4f, 0.9f, 2.2f, 480, 0.9f, 96, 1.1f, 0.6f, 1.2f, 2.2f, 0L))
     );
 }

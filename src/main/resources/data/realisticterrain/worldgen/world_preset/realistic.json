@@ -21,6 +21,8 @@
             "sea_level": 96,
             "roughness": 1.0,
             "vegetation_density": 1.0,
+            "continental_scale": 1.0,
+            "canyon_depth": 1.0,
             "seed_salt": 0
           }
         },
@@ -37,6 +39,8 @@
           "sea_level": 96,
           "roughness": 1.0,
           "vegetation_density": 1.0,
+          "continental_scale": 1.0,
+          "canyon_depth": 1.0,
           "seed_salt": 0
         }
       }

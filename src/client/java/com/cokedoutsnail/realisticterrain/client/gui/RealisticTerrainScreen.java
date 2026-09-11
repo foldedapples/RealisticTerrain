@@ -21,18 +21,20 @@ public final class RealisticTerrainScreen extends Screen {
                 ? generator.settings() : TerrainSettings.DEFAULT;
     }
     private TerrainSettings set(int idx,double v){ float f=(float)v; return switch(idx){
-        case 0->new TerrainSettings(f,s.mountainFrequency(),s.ridgeSharpness(),s.erosionIntensity(),s.riverWidth(),s.riverFrequency(),s.riverDepth(),s.snowLine(),s.biomeScale(),s.seaLevel(),s.roughness(),s.vegetationDensity(),s.seedSalt());
-        case 1->new TerrainSettings(s.mountainHeight(),f,s.ridgeSharpness(),s.erosionIntensity(),s.riverWidth(),s.riverFrequency(),s.riverDepth(),s.snowLine(),s.biomeScale(),s.seaLevel(),s.roughness(),s.vegetationDensity(),s.seedSalt());
-        case 2->new TerrainSettings(s.mountainHeight(),s.mountainFrequency(),f,s.erosionIntensity(),s.riverWidth(),s.riverFrequency(),s.riverDepth(),s.snowLine(),s.biomeScale(),s.seaLevel(),s.roughness(),s.vegetationDensity(),s.seedSalt());
-        case 3->new TerrainSettings(s.mountainHeight(),s.mountainFrequency(),s.ridgeSharpness(),f,s.riverWidth(),s.riverFrequency(),s.riverDepth(),s.snowLine(),s.biomeScale(),s.seaLevel(),s.roughness(),s.vegetationDensity(),s.seedSalt());
-        case 4->new TerrainSettings(s.mountainHeight(),s.mountainFrequency(),s.ridgeSharpness(),s.erosionIntensity(),f,s.riverFrequency(),s.riverDepth(),s.snowLine(),s.biomeScale(),s.seaLevel(),s.roughness(),s.vegetationDensity(),s.seedSalt());
-        case 5->new TerrainSettings(s.mountainHeight(),s.mountainFrequency(),s.ridgeSharpness(),s.erosionIntensity(),s.riverWidth(),f,s.riverDepth(),s.snowLine(),s.biomeScale(),s.seaLevel(),s.roughness(),s.vegetationDensity(),s.seedSalt());
-        case 6->new TerrainSettings(s.mountainHeight(),s.mountainFrequency(),s.ridgeSharpness(),s.erosionIntensity(),s.riverWidth(),s.riverFrequency(),f,s.snowLine(),s.biomeScale(),s.seaLevel(),s.roughness(),s.vegetationDensity(),s.seedSalt());
-        case 7->new TerrainSettings(s.mountainHeight(),s.mountainFrequency(),s.ridgeSharpness(),s.erosionIntensity(),s.riverWidth(),s.riverFrequency(),s.riverDepth(),(int)v,s.biomeScale(),s.seaLevel(),s.roughness(),s.vegetationDensity(),s.seedSalt());
-        case 8->new TerrainSettings(s.mountainHeight(),s.mountainFrequency(),s.ridgeSharpness(),s.erosionIntensity(),s.riverWidth(),s.riverFrequency(),s.riverDepth(),s.snowLine(),f,s.seaLevel(),s.roughness(),s.vegetationDensity(),s.seedSalt());
-        case 9->new TerrainSettings(s.mountainHeight(),s.mountainFrequency(),s.ridgeSharpness(),s.erosionIntensity(),s.riverWidth(),s.riverFrequency(),s.riverDepth(),s.snowLine(),s.biomeScale(),(int)v,s.roughness(),s.vegetationDensity(),s.seedSalt());
-        case 10->new TerrainSettings(s.mountainHeight(),s.mountainFrequency(),s.ridgeSharpness(),s.erosionIntensity(),s.riverWidth(),s.riverFrequency(),s.riverDepth(),s.snowLine(),s.biomeScale(),s.seaLevel(),f,s.vegetationDensity(),s.seedSalt());
-        default->new TerrainSettings(s.mountainHeight(),s.mountainFrequency(),s.ridgeSharpness(),s.erosionIntensity(),s.riverWidth(),s.riverFrequency(),s.riverDepth(),s.snowLine(),s.biomeScale(),s.seaLevel(),s.roughness(),f,s.seedSalt());}; }
+        case 0->new TerrainSettings(f,s.mountainFrequency(),s.ridgeSharpness(),s.erosionIntensity(),s.riverWidth(),s.riverFrequency(),s.riverDepth(),s.snowLine(),s.biomeScale(),s.seaLevel(),s.roughness(),s.vegetationDensity(),s.continentalScale(),s.canyonDepth(),s.seedSalt());
+        case 1->new TerrainSettings(s.mountainHeight(),f,s.ridgeSharpness(),s.erosionIntensity(),s.riverWidth(),s.riverFrequency(),s.riverDepth(),s.snowLine(),s.biomeScale(),s.seaLevel(),s.roughness(),s.vegetationDensity(),s.continentalScale(),s.canyonDepth(),s.seedSalt());
+        case 2->new TerrainSettings(s.mountainHeight(),s.mountainFrequency(),f,s.erosionIntensity(),s.riverWidth(),s.riverFrequency(),s.riverDepth(),s.snowLine(),s.biomeScale(),s.seaLevel(),s.roughness(),s.vegetationDensity(),s.continentalScale(),s.canyonDepth(),s.seedSalt());
+        case 3->new TerrainSettings(s.mountainHeight(),s.mountainFrequency(),s.ridgeSharpness(),f,s.riverWidth(),s.riverFrequency(),s.riverDepth(),s.snowLine(),s.biomeScale(),s.seaLevel(),s.roughness(),s.vegetationDensity(),s.continentalScale(),s.canyonDepth(),s.seedSalt());
+        case 4->new TerrainSettings(s.mountainHeight(),s.mountainFrequency(),s.ridgeSharpness(),s.erosionIntensity(),f,s.riverFrequency(),s.riverDepth(),s.snowLine(),s.biomeScale(),s.seaLevel(),s.roughness(),s.vegetationDensity(),s.continentalScale(),s.canyonDepth(),s.seedSalt());
+        case 5->new TerrainSettings(s.mountainHeight(),s.mountainFrequency(),s.ridgeSharpness(),s.erosionIntensity(),s.riverWidth(),f,s.riverDepth(),s.snowLine(),s.biomeScale(),s.seaLevel(),s.roughness(),s.vegetationDensity(),s.continentalScale(),s.canyonDepth(),s.seedSalt());
+        case 6->new TerrainSettings(s.mountainHeight(),s.mountainFrequency(),s.ridgeSharpness(),s.erosionIntensity(),s.riverWidth(),s.riverFrequency(),f,s.snowLine(),s.biomeScale(),s.seaLevel(),s.roughness(),s.vegetationDensity(),s.continentalScale(),s.canyonDepth(),s.seedSalt());
+        case 7->new TerrainSettings(s.mountainHeight(),s.mountainFrequency(),s.ridgeSharpness(),s.erosionIntensity(),s.riverWidth(),s.riverFrequency(),s.riverDepth(),(int)v,s.biomeScale(),s.seaLevel(),s.roughness(),s.vegetationDensity(),s.continentalScale(),s.canyonDepth(),s.seedSalt());
+        case 8->new TerrainSettings(s.mountainHeight(),s.mountainFrequency(),s.ridgeSharpness(),s.erosionIntensity(),s.riverWidth(),s.riverFrequency(),s.riverDepth(),s.snowLine(),f,s.seaLevel(),s.roughness(),s.vegetationDensity(),s.continentalScale(),s.canyonDepth(),s.seedSalt());
+        case 9->new TerrainSettings(s.mountainHeight(),s.mountainFrequency(),s.ridgeSharpness(),s.erosionIntensity(),s.riverWidth(),s.riverFrequency(),s.riverDepth(),s.snowLine(),s.biomeScale(),(int)v,s.roughness(),s.vegetationDensity(),s.continentalScale(),s.canyonDepth(),s.seedSalt());
+        case 10->new TerrainSettings(s.mountainHeight(),s.mountainFrequency(),s.ridgeSharpness(),s.erosionIntensity(),s.riverWidth(),s.riverFrequency(),s.riverDepth(),s.snowLine(),s.biomeScale(),s.seaLevel(),f,s.vegetationDensity(),s.continentalScale(),s.canyonDepth(),s.seedSalt());
+        case 11->new TerrainSettings(s.mountainHeight(),s.mountainFrequency(),s.ridgeSharpness(),s.erosionIntensity(),s.riverWidth(),s.riverFrequency(),s.riverDepth(),s.snowLine(),s.biomeScale(),s.seaLevel(),s.roughness(),f,s.continentalScale(),s.canyonDepth(),s.seedSalt());
+        case 12->new TerrainSettings(s.mountainHeight(),s.mountainFrequency(),s.ridgeSharpness(),s.erosionIntensity(),s.riverWidth(),s.riverFrequency(),s.riverDepth(),s.snowLine(),s.biomeScale(),s.seaLevel(),s.roughness(),s.vegetationDensity(),f,s.canyonDepth(),s.seedSalt());
+        default->new TerrainSettings(s.mountainHeight(),s.mountainFrequency(),s.ridgeSharpness(),s.erosionIntensity(),s.riverWidth(),s.riverFrequency(),s.riverDepth(),s.snowLine(),s.biomeScale(),s.seaLevel(),s.roughness(),s.vegetationDensity(),s.continentalScale(),f,s.seedSalt());}; }
     @Override protected void init(){ int x=20,w=220,g=22;
         // World-type profile buttons: one click loads a full named style.
         int by=26;
@@ -55,6 +57,8 @@ public final class RealisticTerrainScreen extends Screen {
         addDrawableChild(new DoubleSlider(x,sy+g*9,w,"Sea level",-32,512,s.seaLevel(),v->s=set(9,v)));
         addDrawableChild(new DoubleSlider(x,sy+g*10,w,"Roughness",.2,3,s.roughness(),v->s=set(10,v)));
         addDrawableChild(new DoubleSlider(x,sy+g*11,w,"Vegetation",0,3,s.vegetationDensity(),v->s=set(11,v)));
+        addDrawableChild(new DoubleSlider(x,sy+g*12,w,"Continental scale",.5,2.5,s.continentalScale(),v->s=set(12,v)));
+        addDrawableChild(new DoubleSlider(x,sy+g*13,w,"Canyon depth",0,2.5,s.canyonDepth(),v->s=set(13,v)));
         addDrawableChild(ButtonWidget.builder(Text.translatable("realisticterrain.customize.reset"),b->{s=TerrainSettings.DEFAULT; clearAndInit();}).dimensions(20,height-28,100,20).build());
         addDrawableChild(ButtonWidget.builder(Text.translatable("realisticterrain.customize.done"),b->{
             TerrainSettings applied = s;

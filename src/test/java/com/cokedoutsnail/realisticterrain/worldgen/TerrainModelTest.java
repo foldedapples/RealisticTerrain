@@ -13,7 +13,7 @@ final class TerrainModelTest {
         assertEquals(first, second);
         assertTrue(Double.isFinite(first.height()));
         assertTrue(Double.isFinite(first.waterLevel()));
-        assertTrue(first.height() >= -32.0 && first.height() <= 1950.0);
+        assertTrue(first.height() >= -120.0 && first.height() <= 1950.0);
     }
 
     @Test
@@ -109,10 +109,52 @@ final class TerrainModelTest {
 
     @Test
     void seedSaltChangesTerrain() {
-        TerrainSettings salted = new TerrainSettings(1,1,1,1,1,1,1,430,1,96,1,1,99L);
+        TerrainSettings salted = new TerrainSettings(1,1,1,1,1,1,1,430,1,96,1,1,1,1,99L);
         assertNotEquals(
                 TerrainModel.sample(12L, 800, 1200, TerrainSettings.DEFAULT),
                 TerrainModel.sample(12L, 800, 1200, salted)
         );
+    }
+
+    @Test
+    void tectonicLayeringProducesMountainsAndOcean() {
+        // Plate tectonics must yield both folded ranges and deep abyssal basins over a large area.
+        double peak = -1e9, trough = 1e9;
+        for (int z = -8192; z <= 8192; z += 128) {
+            for (int x = -8192; x <= 8192; x += 128) {
+                double h = TerrainModel.sample(8675309L, x, z, TerrainSettings.DEFAULT).height();
+                if (h > peak) peak = h;
+                if (h < trough) trough = h;
+            }
+        }
+        assertTrue(peak > 650, "Expected folded mountain ranges, peak=" + peak);
+        assertTrue(trough < -40, "Expected deep abyssal ocean, trough=" + trough);
+    }
+
+    @Test
+    void cacheIsSmoothAndShared() {
+        long seed = 424242L;
+        // Determinism: repeated samples are identical (cache is a pure memoization).
+        assertEquals(TerrainModel.sample(seed, 1234, -567, TerrainSettings.DEFAULT),
+                TerrainModel.sample(seed, 1234, -567, TerrainSettings.DEFAULT));
+        // Smoothness: adjacent 1-block columns differ by a bounded amount (no jagged lattice steps).
+        double maxStep = 0;
+        for (int x = 0; x < 64; x++) {
+            double a = TerrainModel.sample(seed, x, 50, TerrainSettings.DEFAULT).height();
+            double b = TerrainModel.sample(seed, x + 1, 50, TerrainSettings.DEFAULT).height();
+            maxStep = Math.max(maxStep, Math.abs(a - b));
+        }
+        assertTrue(maxStep < 130, "Terrain jumped between adjacent columns: " + maxStep);
+        // The coarse cache shares nodes across columns: sampling a fresh 64×64-block patch adds
+        // only the handful of 16×16 cells it touches (plus the fall-line probe fringe), not one
+        // node per column - so the cache growth must be far smaller than the columns sampled.
+        long before = TerrainCache.size();
+        for (int x = 2000; x < 2064; x++) {
+            for (int z = 3000; z < 3064; z++) {
+                TerrainModel.sample(seed, x, z, TerrainSettings.DEFAULT);
+            }
+        }
+        long delta = TerrainCache.size() - before;
+        assertTrue(delta < 400, "Cache should share coarse nodes across columns, delta=" + delta);
     }
 }

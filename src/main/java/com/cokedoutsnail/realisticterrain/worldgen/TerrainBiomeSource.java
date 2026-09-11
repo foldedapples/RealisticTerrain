@@ -91,46 +91,72 @@ public final class TerrainBiomeSource extends BiomeSource {
     public RegistryEntry<Biome> getBiome(int biomeX, int biomeY, int biomeZ, MultiNoiseUtil.MultiNoiseSampler sampler) {
         double x = biomeX * 4.0 / scale;
         double z = biomeZ * 4.0 / scale;
-        return pick(TerrainModel.sample(terrainSeed, x, z, settings));
+        return pick(x, z, TerrainModel.sample(terrainSeed, x, z, settings));
     }
 
-    private RegistryEntry<Biome> pick(TerrainModel.Sample s) {
+    private RegistryEntry<Biome> pick(double x, double z, TerrainModel.Sample s) {
         double h = s.height();
         double water = s.waterLevel();
-        double moisture = s.moisture();
-        double temperature = s.temperature();
+        double m = s.moisture();
+        double t = s.temperature();
 
         // Water, depth ordered: rivers/lakes first, then open water by depth.
         if (h < water) {
             if (s.river() > 0.25 || s.lake() > 0.3) return biome(BiomeKeys.RIVER);
             double depth = water - h;
-            if (depth > 26) return biome(BiomeKeys.DEEP_OCEAN);
+            // Mid-ocean ridges and rift trenches stay abyssal even when shallow.
+            if (depth > 26 || (s.divergent() > 0.6 && depth > 10)) return biome(BiomeKeys.DEEP_OCEAN);
             if (depth > 4) return biome(BiomeKeys.OCEAN);
             return biome(BiomeKeys.BEACH);
         }
         // Coastal fringe.
         if (h < settings.seaLevel() + 3) return biome(BiomeKeys.BEACH);
 
-        boolean cold = temperature < -0.2;
-        boolean hot = temperature > 0.25;
-        boolean wet = moisture > 0.15;
-        boolean dry = moisture < -0.1;
+        // Tectonic refinements.
+        boolean riftValley = s.divergent() > 0.55 && h < settings.seaLevel() + 70; // damp rift corridor
+        boolean faulted = s.fault() > 0.55; // rocky, harsh active zone
+
+        boolean cold = t < -0.2;
+        boolean hot = t > 0.25;
+        boolean wet = m > 0.15;
+        boolean dry = m < -0.1;
 
         // Altitude bands: tundra, alpine scrub and tree line.
         if (h > settings.snowLine() + 130) return biome(BiomeKeys.SNOWY_SLOPES);
         if (h > settings.snowLine() + 30) return cold ? biome(BiomeKeys.SNOWY_SLOPES) : biome(BiomeKeys.MEADOW);
         if (h > settings.snowLine() - 60) return cold ? biome(BiomeKeys.GROVE) : biome(BiomeKeys.MEADOW);
 
-        // Lowland climate zones.
+        // Rift valleys hold moisture and lush vegetation despite the altitude.
+        if (riftValley) {
+            if (cold) return biome(BiomeKeys.TAIGA);
+            return wet ? biome(BiomeKeys.FOREST) : biome(BiomeKeys.PLAINS);
+        }
+
+        // Lowland climate zones, with smooth ecotone blending at boundaries so the 4-block
+        // biome lattice never produces a hard, stepped chunk border.
         if (cold) return wet ? biome(BiomeKeys.TAIGA) : biome(BiomeKeys.SNOWY_PLAINS);
         if (hot) {
             if (wet) return biome(BiomeKeys.JUNGLE);
             if (dry) return biome(BiomeKeys.DESERT);
             return biome(BiomeKeys.SAVANNA);
         }
-        if (wet) return moisture > 0.3 ? biome(BiomeKeys.DARK_FOREST) : biome(BiomeKeys.FOREST);
+        if (wet) return ecotone(0.28, 0.34, m, x, z) ? biome(BiomeKeys.DARK_FOREST) : biome(BiomeKeys.FOREST);
         if (dry) return biome(BiomeKeys.PLAINS);
+        if (faulted) return biome(BiomeKeys.WINDSWEPT_SAVANNA); // sparse, rocky
         return biome(BiomeKeys.BIRCH_FOREST);
+    }
+
+    /**
+     * Smoothly picks the "rich" side of a climate threshold over a transition band. Within the
+     * band a micro-jitter field decides, so neighbouring 4-block cells blend instead of lining up
+     * into a hard border.
+     */
+    private boolean ecotone(double lo, double hi, double v, double x, double z) {
+        if (v < lo) return false;
+        if (v > hi) return true;
+        double t = (v - lo) / (hi - lo);
+        double jitter = 0.5 + 0.5 * com.cokedoutsnail.realisticterrain.noise.Noise2D.value(x / 6.0, z / 6.0, terrainSeed + 907);
+        return jitter < t;
     }
 
     private RegistryEntry<Biome> biome(RegistryKey<Biome> key) {

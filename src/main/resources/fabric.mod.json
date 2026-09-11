@@ -3,8 +3,12 @@
   "id": "realisticterrain",
   "version": "${version}",
   "name": "Realistic Terrain",
-  "description": "Large-scale erosion-inspired mountains, valleys, rivers and coastlines with a configurable world preset.",
+  "description": "Plate-tectonic world generation: folded mountain ranges, rift valleys, hydrological canyons, geological rock strata, terrain-matched biomes and slope-aware forests, with a configurable world preset.",
   "authors": ["cokedoutsnail"],
+  "credits": "Terrain mathematics and architecture inspired by TerraForged and ReTerraForged by Won-G (https://github.com/won-g).",
+  "contributors": {
+    "Won-G (TerraForged / ReTerraForged)": "Inspiration for the tectonic terrain engine"
+  },
   "license": "MIT",
   "environment": "*",
   "entrypoints": {

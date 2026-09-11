@@ -11,18 +11,17 @@ The generator is intentionally source-first and experimental. Back up worlds bef
 ## Features
 
 - Selectable **Realistic Terrain** preset in Create World.
-- Dedicated customization screen with five world-type profiles (**Continental, Alpine, Archipelago, Rolling Hills, Canyons**), twelve sliders, and a live geological elevation preview with contour lines and a peak/average-height readout.
-- Large-scale continental and mountain masks rather than repeated vanilla-sized hills.
-- Ridged peaks, erosion channels, exposed steep rock, terraced foothills, beaches, and coastal shelves.
-- Warped, connected river fields with configurable width, frequency, and carving depth.
-- Rivers enforce a fall line: corridors only carve where they run downhill inside valleys, so channels meander from headwater to coast, taper out of the high ranges, and never slice through ridgelines - plus basin-only lakes.
-- **Terrain-aware biomes**: a custom biome source picks vanilla biomes from the same height/moisture/temperature model that builds the terrain, so forests, deserts, tundra and alpine meadows sit on the actual mountains, rivers and valleys instead of vanilla multi-noise zones.
-- **Terrain-aware vegetation**: extra trees are placed from the terrain model (denser forests in wet lowlands, spruce/climbers at altitude, none in deserts, rivers, lakes or on steep slopes), scaled by the Vegetation density slider.
+- Dedicated customization screen with five world-type profiles (**Continental, Alpine, Archipelago, Rolling Hills, Canyons**), fourteen sliders, and a live geological elevation preview with contour lines and a peak/average-height readout.
+- **Plate tectonics**: continents are 2D cellular tectonic plates. Collision margins fold into long mountain belts (orogeny) while divergent margins carve rift valleys and deep ocean trenches.
+- **Hydrological erosion**: twice-domain-warped drainage carves dendritic river basins, and high plateaus are dissected by gully noise into steep, dramatic canyons.
+- **Geological rock strata**: canyon walls expose sedimentary banding, active fault zones get granite/diorite/basalt intrusions, and deep basement rock is deepslate.
+- **Tile caching & smooth interpolation**: slow continental fields are computed once per 16×16 tile, shared by all neighbour chunks, and bilinearly interpolated so terrain is continuous with no blocky steps.
+- Terrain-aware biomes pick vanilla biomes from the same tectonic height/moisture/temperature model (rift valleys get lush corridors, folded ranges get alpine meadows, rift oceans stay abyssal), with ecotone jitter that softens biome borders.
+- **Slope-aware vegetation**: forests cluster in flat valley floors and canyon bottoms and vanish on steep walls, scree and peaks, scaled by the Vegetation density slider.
+- Rivers enforce a fall line: corridors only carve where they run downhill inside valleys, so channels meander from headwater to coast, taper out of the folded ranges, and never slice through ridgelines - plus basin-only lakes.
 - Biome-coordinate scaling and biome-aware surface temperature/precipitation.
-- Soft snow-line probability instead of a hard horizontal cutoff.
-- Mountain caves generated without a custom chunk format.
-- Vanilla Nether and End dimensions.
-- Normal vanilla chunk sections and serialization for the safest practical Voxy interoperability.
+- Soft snow-line probability instead of a hard horizontal cutoff, and mountain caves generated without a custom chunk format.
+- Vanilla Nether and End dimensions, and normal vanilla chunk sections for the safest practical Voxy interoperability.
 
 ## Minecraft's height limit
 
@@ -51,6 +50,8 @@ Choose **Realistic Terrain** in the World Type selector, then open **Customize**
 | Biome scale | Horizontal size of vanilla biome regions |
 | Sea level | Ocean and river waterline |
 | Roughness | Fine terrain variation and cave threshold |
+| Continental scale | Size of continents and ocean basins |
+| Canyon depth | Incision of fluvial canyons into plateaus |
 
 Clicking **Apply** replaces the selected preset's Overworld generator with one containing the chosen settings. The generator codec writes those values into the world's generation data, so the same world reproduces them after rejoining.
 
@@ -79,6 +80,10 @@ Realistic Terrain does not replace chunk storage, sections, palettes, heightmaps
 ## Water color note
 
 The terrain generator creates shallow shelves and deep channels. Vanilla water tint is biome-based rather than depth-based, so exact turquoise-to-deep-blue grading belongs in a client shader or rendering module. The generator does not substitute fake water blocks that would break survival behavior or LoD renderers.
+
+## Credits
+
+The terrain mathematics and overall architecture are inspired by, and pay homage to, **TerraForged** and its successor **ReTerraForged** by **Won-G** (https://github.com/won-g, https://github.com/KVarens/ReTerraForged). Plate tectonics, folded orogeny belts, drainage-based erosion and terrain-aware biome placement all follow the spirit of that pioneering work.
 
 ## License
 

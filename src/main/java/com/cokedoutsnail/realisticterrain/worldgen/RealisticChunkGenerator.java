@@ -2,6 +2,7 @@ package com.cokedoutsnail.realisticterrain.worldgen;
 
 import com.mojang.serialization.MapCodec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
+import com.cokedoutsnail.realisticterrain.noise.Noise2D;
 import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
 import net.minecraft.registry.DynamicRegistryManager;
@@ -36,6 +37,7 @@ import net.minecraft.util.math.random.Random;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicLong;
 
 public final class RealisticChunkGenerator extends ChunkGenerator {
     public static final int MIN_Y=-64, MAX_Y=2031, WORLD_HEIGHT=2096;
@@ -47,7 +49,9 @@ public final class RealisticChunkGenerator extends ChunkGenerator {
     private final TerrainSettings settings;
     // The terrain seed is derived once from NoiseConfig (deterministic per world) and reused for
     // both terrain sampling and biome sampling, so chunks and features stay perfectly aligned.
-    private volatile long cachedTerrainSeed = Long.MIN_VALUE;
+    // Atomic because populateNoise runs concurrently on chunk worker threads (benign, the derived
+    // value is identical on every thread - the CAS just makes the write-once cache race-free).
+    private final AtomicLong cachedTerrainSeed = new AtomicLong(Long.MIN_VALUE);
 
     public RealisticChunkGenerator(BiomeSource biomeSource, TerrainSettings settings){ super(biomeSource); this.settings=settings; }
     public TerrainSettings settings(){ return settings; }
@@ -57,19 +61,20 @@ public final class RealisticChunkGenerator extends ChunkGenerator {
     @Override public int getWorldHeight(){ return WORLD_HEIGHT; }
 
     private long terrainSeed(NoiseConfig noiseConfig){
-        long s=cachedTerrainSeed;
-        if(s==Long.MIN_VALUE){
-            s=noiseConfig.getOrCreateRandomDeriver(com.cokedoutsnail.realisticterrain.RealisticTerrainMod.id("terrain"))
+        long s = cachedTerrainSeed.get();
+        if (s == Long.MIN_VALUE) {
+            s = noiseConfig.getOrCreateRandomDeriver(com.cokedoutsnail.realisticterrain.RealisticTerrainMod.id("terrain"))
                     .split(0L).nextLong();
-            cachedTerrainSeed=s;
+            cachedTerrainSeed.compareAndSet(Long.MIN_VALUE, s);
+            s = cachedTerrainSeed.get();
         }
         return s;
     }
 
     /** Cached terrain seed for paths without a NoiseConfig (feature generation); set by populateNoise. */
     private long terrainSeedValue(){
-        long s=cachedTerrainSeed;
-        return s==Long.MIN_VALUE ? 0L : s;
+        long s = cachedTerrainSeed.get();
+        return s == Long.MIN_VALUE ? 0L : s;
     }
 
     @Override public CompletableFuture<Chunk> populateNoise(Blender blender, NoiseConfig noiseConfig, StructureAccessor structures, Chunk chunk){
@@ -92,7 +97,7 @@ public final class RealisticChunkGenerator extends ChunkGenerator {
                     if(y>surface) state = y<=waterTop?Blocks.WATER.getDefaultState():Blocks.AIR.getDefaultState();
                     else if(y==MIN_Y) state=Blocks.BEDROCK.getDefaultState();
                     else if(TerrainModel.cave(seed,x,y,z,settings) && y<surface-7) state= y<settings.seaLevel()-18?Blocks.WATER.getDefaultState():Blocks.AIR.getDefaultState();
-                    else state=baseState(x,z,surface,y,waterTop,sm,cold,wet);
+                    else state=baseState(seed,x,z,surface,y,waterTop,sm,cold,wet);
                     chunk.setBlockState(p.set(x,y,z),state,0);
                 }
             }
@@ -101,18 +106,40 @@ public final class RealisticChunkGenerator extends ChunkGenerator {
         }, Util.getMainWorkerExecutor());
     }
 
-    private BlockState baseState(int x,int z,int surface,int y,int waterTop,TerrainModel.Sample sm,boolean cold,boolean wet){
+    private BlockState baseState(long seed,int x,int z,int surface,int y,int waterTop,TerrainModel.Sample sm,boolean cold,boolean wet){
         int depth=surface-y;
-        if(depth>5) return Blocks.STONE.getDefaultState();
-        if(surface<=waterTop+2) {
+        boolean submerged = surface <= waterTop + 2;
+        // Water-bearing beds: beaches, river/lake floors, sandbars.
+        if(submerged){
             if(sm.river()>.25 && depth==0) return Blocks.GRAVEL.getDefaultState();
-            return depth==0?Blocks.SAND.getDefaultState():Blocks.SANDSTONE.getDefaultState();
+            if(depth==0) return Blocks.SAND.getDefaultState();
+            if(depth==1) return Blocks.SANDSTONE.getDefaultState();
+            return Blocks.STONE.getDefaultState();
         }
+        // Snowline.
         double snowFade=(surface-settings.snowLine())/115.0 + (cold?.55:0);
         if(depth==0 && snowFade>0 && pseudo(x,z)<Math.min(1,snowFade)) return Blocks.SNOW_BLOCK.getDefaultState();
+        // Exposed bedrock on steep, high, ridged slopes (scree, peaks).
         if(sm.ridge()>.72 && sm.slopeHint()>.42) return Blocks.STONE.getDefaultState();
+
+        // --- Geological rock strata ---
+        // 1. Igneous intrusion near active plate margins (faults).
+        if(sm.fault()>.45 && depth<40){
+            if(y<settings.seaLevel()-40 && sm.fault()>.7) return Blocks.BASALT.getDefaultState();
+            double mix=Noise2D.value((x + y*.30)/23.0,(z - y*.20)/23.0,seed+991);
+            return mix>.5?Blocks.GRANITE.getDefaultState():Blocks.DIORITE.getDefaultState();
+        }
+        // 2. Deep basement rock.
+        if(y < settings.seaLevel()-160) return Blocks.DEEPSLATE.getDefaultState();
+        // 3. Canyon/exposed walls show sedimentary banding.
+        if(depth>8 && sm.slopeHint()>.25){
+            double band=Noise2D.value(x/17.0,(z + y*1.25)/17.0,seed+1009);
+            return band>0.15?Blocks.SANDSTONE.getDefaultState():Blocks.STONE.getDefaultState();
+        }
+        // 4. Surface and subsoil.
         if(depth==0) return wet?Blocks.GRASS_BLOCK.getDefaultState():Blocks.COARSE_DIRT.getDefaultState();
-        return Blocks.DIRT.getDefaultState();
+        if(depth<=3) return wet?Blocks.DIRT.getDefaultState():Blocks.COARSE_DIRT.getDefaultState();
+        return Blocks.STONE.getDefaultState();
     }
     private static double pseudo(int a,int b){ long h=(a*0x9E3779B97F4A7C15L)^(b*0xC2B2AE3D27D4EB4FL); h^=h>>>29; return (h&0xffff)/65535.0; }
 
@@ -125,11 +152,24 @@ public final class RealisticChunkGenerator extends ChunkGenerator {
         return (int)Math.floor(height)+1;
     }
     @Override public VerticalBlockSample getColumnSample(int x,int z,HeightLimitView world,NoiseConfig noiseConfig){
-        TerrainModel.Sample sample=TerrainModel.sample(terrainSeed(noiseConfig),x,z,settings);
+        long seed=terrainSeed(noiseConfig);
+        TerrainModel.Sample sample=TerrainModel.sample(seed,x,z,settings);
         int terrainTop=(int)Math.floor(sample.height())+1;
         int waterTop=(int)Math.floor(sample.waterLevel())+1;
         int top=Math.max(terrainTop,waterTop); BlockState[] states=new BlockState[top-MIN_Y];
-        for(int y=MIN_Y;y<top;y++) states[y-MIN_Y]=y<terrainTop?Blocks.STONE.getDefaultState():(y<waterTop?Blocks.WATER.getDefaultState():Blocks.AIR.getDefaultState());
+        boolean submerged=terrainTop<=waterTop+2;
+        for(int y=MIN_Y;y<top;y++){
+            BlockState st;
+            if(y>=terrainTop) st=y<waterTop?Blocks.WATER.getDefaultState():Blocks.AIR.getDefaultState();
+            else if(y==MIN_Y) st=Blocks.BEDROCK.getDefaultState();
+            else if(y<settings.seaLevel()-160) st=Blocks.DEEPSLATE.getDefaultState();
+            else if(submerged && y==terrainTop-1) st=Blocks.SAND.getDefaultState();
+            else if(submerged && y>=terrainTop-3) st=Blocks.SANDSTONE.getDefaultState();
+            else if(y>=terrainTop-1) st=Blocks.GRASS_BLOCK.getDefaultState();
+            else if(y>=terrainTop-4) st=Blocks.DIRT.getDefaultState();
+            else st=Blocks.STONE.getDefaultState();
+            states[y-MIN_Y]=st;
+        }
         return new VerticalBlockSample(MIN_Y,states);
     }
     @Override public void buildSurface(ChunkRegion region,StructureAccessor structures,NoiseConfig noiseConfig,Chunk chunk) { }
@@ -146,6 +186,8 @@ public final class RealisticChunkGenerator extends ChunkGenerator {
      * Vanilla biome decorations first, then extra terrain-aware trees so the vegetation density
      * slider actually does something. Trees are placed straight from configured features (bypassing
      * placement modifiers, which are biome-gated and would block extras outside their biome list).
+     * Density scales dynamically with real geomorph slope: dense, clustered forests in flat valley
+     * floors and canyon bottoms, thinning to nothing on steep canyon walls, scree and peaks.
      */
     @Override public void generateFeatures(StructureWorldAccess world, Chunk chunk, StructureAccessor structureAccessor){
         super.generateFeatures(world, chunk, structureAccessor);
@@ -160,21 +202,29 @@ public final class RealisticChunkGenerator extends ChunkGenerator {
         for(int lx=0;lx<16;lx+=4) for(int lz=0;lz<16;lz+=4){
             int x=cp.getStartX()+lx, z=cp.getStartZ()+lz;
             TerrainModel.Sample sm=TerrainModel.sample(seed,x,z,settings);
-            Identifier species=treeSpecies(sm,settings);
+            double slope=TerrainModel.geomorphSlope(seed,x,z,settings);
+            Identifier species=treeSpecies(sm,settings,slope);
             if(species==null) continue;
-            if(random.nextFloat() > settings.vegetationDensity()*0.16f) continue;
+            // Flat valley floors hold dense forest; steep walls and peaks hold none.
+            double flatness=clamp01(1.0 - (slope-0.30)/1.2);
+            // Forests come in patches (cluster noise), not uniform sprinkles.
+            double cluster=0.42+0.35*Noise2D.value(x/300.0, z/300.0, seed+977);
+            double chance=settings.vegetationDensity()*0.24f*flatness*cluster;
+            if(random.nextFloat() > chance) continue;
             int y=chunk.sampleHeightmap(Heightmap.Type.WORLD_SURFACE_WG,lx,lz)+1;
             configured.getOptionalValue(RegistryKey.of(RegistryKeys.CONFIGURED_FEATURE, species)).ifPresent(f ->
                     f.generate(world, this, random, new BlockPos(x, y, z)));
         }
     }
 
-    /** Chooses a vanilla tree placed-feature id (or null for no tree) from the terrain model climate. */
-    private static Identifier treeSpecies(TerrainModel.Sample sm,TerrainSettings s){
+    private static double clamp01(double v){ return v<0?0:(v>1?1:v); }
+
+    /** Chooses a vanilla tree placed-feature id (or null for no tree) from terrain climate + slope. */
+    private static Identifier treeSpecies(TerrainModel.Sample sm,TerrainSettings s,double slope){
         double h=sm.height(), w=sm.waterLevel();
         if(h<w+2) return null;                            // below the waterline
         if(sm.river()>0.2 || sm.lake()>0.2) return null;  // in a channel or lake
-        if(sm.slopeHint()>0.5) return null;               // too steep to hold a tree
+        if(slope>0.62) return null;                       // steep canyon walls / scree / peaks
         if(h>s.snowLine()+40) return null;                // above the tree line
         double m=sm.moisture(), t=sm.temperature();
         if(t<-.2){
