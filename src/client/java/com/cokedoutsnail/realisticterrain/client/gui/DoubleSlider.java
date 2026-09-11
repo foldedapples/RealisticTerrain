@@ -1,9 +1,12 @@
 package com.cokedoutsnail.realisticterrain.client.gui;
 
+import net.fabricmc.api.EnvType;
+import net.fabricmc.api.Environment;
 import net.minecraft.client.gui.widget.SliderWidget;
 import net.minecraft.text.Text;
 import java.util.function.DoubleConsumer;
 
+@Environment(EnvType.CLIENT)
 final class DoubleSlider extends SliderWidget {
     private final String label; private final double min,max; private final DoubleConsumer changed;
     DoubleSlider(int x,int y,int w,String label,double min,double max,double current,DoubleConsumer changed){ super(x,y,w,20,Text.empty(),(current-min)/(max-min)); this.label=label;this.min=min;this.max=max;this.changed=changed;updateMessage(); }

@@ -52,6 +52,26 @@ public final class TerrainModel {
     private static final double MOISTURE_BOOST = 1.5;
 
     /**
+     * Normalisation for the climate noise fields, the value the {@code fbm(x, z, seed, 4, 2, .5)}
+     * sampler configuration actually reaches near its extremes (measured p-max over a 12k&times;12k
+     * block sweep: {@literal ~0.62}).
+     *
+     * <p>It is here to fix a real biome-distribution bug. A four-octave fractal whose octaves keep
+     * halving only reaches about 60% of its nominal {@code [-1, 1]} range before the weights pull the
+     * sum back towards the middle, so the raw field lived in roughly {@code [-0.6, 0.6]}. Every biome
+     * threshold in {@link TerrainBiomeSource} is stated on the nominal {@code [-1, 1]} scale - desert
+     * at {@code moisture < -0.1}, jungle at {@code temperature > 0.35} - so a compressed field pushes
+     * the whole world towards the middle of the table: the hot/cold and wet/dry extremes that pick
+     * desert, savanna, jungle and taiga are barely reachable, and the map collapses onto the few
+     * temperate entries in the middle (forest, plains, birch forest). Dividing by this constant
+     * stretches the field so the thresholds land where their names say they do, and the
+     * {@link #clamp} below is what keeps the stretch from ever leaving {@code [-1, 1]}. It multiplies
+     * the noise only, never the altitude correction, so a tall range still reads colder than the
+     * valley beside it at the same latitude.
+     */
+    private static final double CLIMATE_NORM = 0.62;
+
+    /**
      * Half-width of a river's <em>flat</em> bed, in blocks, at {@code riverWidth = 1}. It is scaled
      * by the river-width slider and then clamped: those clamps are the guarantee that a wide-river
      * setting produces a big river rather than an inland fjord, because the corridor is now measured
@@ -343,7 +363,9 @@ public final class TerrainModel {
         double waterColumn = riverAnchor * RIVER_WATER_FILL + lakeAnchor * LAKE_WATER_FILL;
         double inlandWater = Math.max(s.seaLevel(), h0 - riverAnchor - lakeAnchor + waterColumn);
 
-        double climateMoisture = Noise2D.fbm(x / (1700.0 * s.biomeScale()), z / (1700.0 * s.biomeScale()), seed + 191, 4, 2, .5);
+        // Low-frequency value-noise fbm, stretched by CLIMATE_NORM so its warm/cold and wet/dry
+        // extremes actually reach the biome table's thresholds, then clamped to the nominal range.
+        double climateMoisture = clamp(Noise2D.fbm(x / (1700.0 * s.biomeScale()), z / (1700.0 * s.biomeScale()), seed + 191, 4, 2, .5) / CLIMATE_NORM, -1.0, 1.0);
         // Drainage traffic can only ADD moisture. A stream through an arid plain is an oasis; it never
         // dries anything out, and it must not silently rewrite the climate either, because the biome
         // thresholds downstream are tuned to the climate field's own scale. So the bonus only starts at
@@ -352,8 +374,11 @@ public final class TerrainModel {
         // wetter. That is the Phase-5 rule - lush where the water ran, sparse where it did not.
         double moisture = clamp(climateMoisture
                 + Math.max(0.0, hydro.moisture() - MOISTURE_FLOOR) * MOISTURE_BOOST, -1.0, 1.0);
-        double temperature = Noise2D.fbm(x / (2200.0 * s.biomeScale()), z / (2200.0 * s.biomeScale()), seed + 211, 4, 2, .5)
-                - Math.max(0, h0 - 250) / 1650.0;
+        // Same normalisation for the temperature field, then the altitude lapse: high ground inside a
+        // zone is colder than the low ground beside it, but the noise stretch is applied first so the
+        // climate zones themselves still span the full range.
+        double temperature = clamp(Noise2D.fbm(x / (2200.0 * s.biomeScale()), z / (2200.0 * s.biomeScale()), seed + 211, 4, 2, .5) / CLIMATE_NORM
+                - Math.max(0, h0 - 250) / 1650.0, -1.0, 1.0);
         double slopeHint = clamp(Math.abs(erosion) * (0.4 + 0.6 * ridge));
 
         return new Sample(h, inlandWater, river, lake, ridge, moisture, temperature, slopeHint,

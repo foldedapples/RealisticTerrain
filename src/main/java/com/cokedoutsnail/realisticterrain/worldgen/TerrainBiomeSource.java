@@ -141,7 +141,12 @@ public final class TerrainBiomeSource extends BiomeSource {
         // from (see TerrainModel#tectonicBase), so gating on genuine proximity to the coast line in
         // THAT field - not the derived height - is what confines beach to the coast itself, the way
         // ReTerraForged's COAST control point does.
-        boolean nearCoastline = s.continent() - settings.coastLine() < 0.05;
+        // Symmetric proximity, and deliberately the same expression the chunk generator's beach band
+        // uses, so the biome and the blocks under it can never disagree. The old one-sided test
+        // (`continent - coastLine < 0.05`) was also true for the whole ocean side of the field, so any
+        // low-lying land whose continentalness sat below the coast line - an uplifted shelf, a river
+        // mouth, the floor of a rift - was reported as beach too.
+        boolean nearCoastline = Math.abs(s.continent() - settings.coastLine()) < 0.05;
         if (nearCoastline && h < settings.seaLevel() + 5) return biome(BiomeKeys.BEACH);
 
         // Tectonic refinements.

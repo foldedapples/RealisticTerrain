@@ -105,6 +105,14 @@ public final class RealisticChunkGenerator extends ChunkGenerator {
                 RegistryEntry<Biome> biome = biomeSource.getBiome(x >> 2, surface >> 2, z >> 2, noiseConfig.getMultiNoiseSampler());
                 boolean cold=biome.value().getTemperature() < 0.15F || sm.temperature() < -.2;
                 boolean wet=biome.value().hasPrecipitation() || sm.moisture()>.15;
+                // Sand belongs to the coast and to genuine desert, and to nowhere else. Both flags
+                // mirror the exact branches TerrainBiomeSource picks DESERT and BEACH from, so the
+                // surface block always agrees with the biome standing on it - instead of sand being a
+                // global fallback (the all-sand world) or, as it was, absent from every dry surface
+                // because land fell straight through to coarse dirt.
+                boolean desert = sm.temperature() > 0.25 && sm.moisture() < -0.1;
+                boolean beach = Math.abs(sm.continent() - settings.coastLine()) < 0.05
+                        && sm.height() < settings.seaLevel() + 5;
                 int top=Math.max(surface,waterTop);
                 for(int y=MIN_Y;y<=top;y++){
                     BlockState state;
@@ -114,7 +122,7 @@ public final class RealisticChunkGenerator extends ChunkGenerator {
                     if(y<=CRUST_TOP) state = y==MIN_Y?Blocks.BEDROCK.getDefaultState():Blocks.DEEPSLATE.getDefaultState();
                     else if(y>surface) state = y<=waterTop?Blocks.WATER.getDefaultState():Blocks.AIR.getDefaultState();
                     else if(TerrainModel.cave(seed,x,y,z,settings) && y<surface-7) state= y<settings.seaLevel()-18?Blocks.WATER.getDefaultState():Blocks.AIR.getDefaultState();
-                    else state=baseState(seed,x,z,surface,y,sm,cold,wet);
+                    else state=baseState(seed,x,z,surface,y,sm,cold,wet,desert,beach);
                     chunk.setBlockState(p.set(x,y,z),state,0);
                 }
             }
@@ -123,7 +131,7 @@ public final class RealisticChunkGenerator extends ChunkGenerator {
         }, Util.getMainWorkerExecutor());
     }
 
-    private BlockState baseState(long seed,int x,int z,int surface,int y,TerrainModel.Sample sm,boolean cold,boolean wet){
+    private BlockState baseState(long seed,int x,int z,int surface,int y,TerrainModel.Sample sm,boolean cold,boolean wet,boolean desert,boolean beach){
         int depth=surface-y;
         // Beach and channel-bed test. This MUST be read off the continuous submersion depth, never
         // off `surface - waterTop`: both of those are floored to an integer y, so their difference is
@@ -145,6 +153,17 @@ public final class RealisticChunkGenerator extends ChunkGenerator {
         if(depth==0 && snowFade>0 && pseudo(x,z)<Math.min(1,snowFade)) return Blocks.SNOW_BLOCK.getDefaultState();
         // Exposed bedrock on steep, high, ridged slopes (scree, peaks).
         if(sm.ridge()>.72 && sm.slopeHint()>.42) return Blocks.STONE.getDefaultState();
+        // Dry sand, restricted to the coast and to real desert. The coastal arm only needs a small
+        // jittered band so the shore reads as a beach rather than a carpet: `(pseudo - 0.5)` is a
+        // deterministic per-column value in [-0.5, 0.5], so it puts sand up to ~3 blocks inland of the
+        // coastline contour and tapers it out. Desert is the genuine biome (hot AND dry, exactly the
+        // branch TerrainBiomeSource uses), so the sand there is a desert floor with sandstone under
+        // it - and because `desert`/`beach` are false everywhere else, no other biome can turn to sand.
+        boolean coastal = beach && sm.continent() < settings.coastLine() + 0.02 + (pseudo(x,z)-0.5)*0.03;
+        if(depth==0 && desert) return Blocks.SAND.getDefaultState();
+        if(depth>0 && depth<=4 && desert) return Blocks.SANDSTONE.getDefaultState();
+        if(depth==0 && coastal) return Blocks.SAND.getDefaultState();
+        if(depth==1 && coastal) return Blocks.SANDSTONE.getDefaultState();
 
         // --- Geological rock strata ---
         // 1. Igneous intrusion near active plate margins (faults).
@@ -194,6 +213,12 @@ public final class RealisticChunkGenerator extends ChunkGenerator {
         // is what made the beach band step, and this column sample is what spawn placement and
         // feature generation read.
         boolean submerged=sample.waterLevel()-sample.height() > (pseudo(x,z)-0.5)*1.4 - 2.0;
+        // Kept in lockstep with baseState: the column sample is what spawn placement and feature
+        // generation read, so a desert or a dry beach has to report the same sand here too.
+        boolean desert = sample.temperature() > 0.25 && sample.moisture() < -0.1;
+        boolean coastal = Math.abs(sample.continent()-settings.coastLine()) < 0.05
+                && sample.height() < settings.seaLevel()+5
+                && sample.continent() < settings.coastLine() + 0.02 + (pseudo(x,z)-0.5)*0.03;
         for(int y=MIN_Y;y<top;y++){
             BlockState st;
             // Same guaranteed crust as populateNoise: this column sample is what spawn placement
@@ -203,6 +228,10 @@ public final class RealisticChunkGenerator extends ChunkGenerator {
             else if(y<settings.seaLevel()-160) st=Blocks.DEEPSLATE.getDefaultState();
             else if(submerged && y==terrainTop-1) st=Blocks.SAND.getDefaultState();
             else if(submerged && y>=terrainTop-3) st=Blocks.SANDSTONE.getDefaultState();
+            else if(!submerged && desert && y==terrainTop-1) st=Blocks.SAND.getDefaultState();
+            else if(!submerged && desert && y>=terrainTop-5) st=Blocks.SANDSTONE.getDefaultState();
+            else if(!submerged && coastal && y==terrainTop-1) st=Blocks.SAND.getDefaultState();
+            else if(!submerged && coastal && y==terrainTop-2) st=Blocks.SANDSTONE.getDefaultState();
             else if(y>=terrainTop-1) st=Blocks.GRASS_BLOCK.getDefaultState();
             else if(y>=terrainTop-4) st=Blocks.DIRT.getDefaultState();
             else st=Blocks.STONE.getDefaultState();

@@ -3,6 +3,8 @@ package com.cokedoutsnail.realisticterrain.client.gui;
 import com.cokedoutsnail.realisticterrain.RealisticTerrainMod;
 import com.cokedoutsnail.realisticterrain.worldgen.TerrainModel;
 import com.cokedoutsnail.realisticterrain.worldgen.TerrainSettings;
+import net.fabricmc.api.EnvType;
+import net.fabricmc.api.Environment;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.font.TextRenderer;
 import net.minecraft.client.gl.RenderPipelines;
@@ -45,6 +47,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * Customize screen opens. It goes with the texture manager at game shutdown. The worker thread
  * belongs to this instance and is stopped by {@link #close()}.
  */
+@Environment(EnvType.CLIENT)
 final class HeightmapPreview implements AutoCloseable {
     /** Texels per side of the preview image; also the panel's nominal size in GUI pixels. */
     static final int SIZE = 200;

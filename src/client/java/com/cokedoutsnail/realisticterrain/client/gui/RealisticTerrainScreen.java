@@ -4,6 +4,8 @@ import com.cokedoutsnail.realisticterrain.worldgen.RealisticChunkGenerator;
 import com.cokedoutsnail.realisticterrain.worldgen.ScaledBiomeSource;
 import com.cokedoutsnail.realisticterrain.worldgen.TerrainBiomeSource;
 import com.cokedoutsnail.realisticterrain.worldgen.TerrainSettings;
+import net.fabricmc.api.EnvType;
+import net.fabricmc.api.Environment;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.screen.world.CreateWorldScreen;
@@ -28,6 +30,7 @@ import java.util.concurrent.ThreadLocalRandom;
  * in the settings: it changes how the map is drawn, not how the world generates, so it must never end
  * up in a world's generation data.
  */
+@Environment(EnvType.CLIENT)
 public final class RealisticTerrainScreen extends Screen {
     private final CreateWorldScreen parent;
     private final HeightmapPreview preview = new HeightmapPreview();

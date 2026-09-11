@@ -22,6 +22,9 @@ The generator is intentionally source-first and experimental. Back up worlds bef
 - **Slope-aware vegetation**: forests cluster in flat valley floors and canyon bottoms and vanish on steep walls, scree and peaks, scaled by the Vegetation density slider.
 - Rivers enforce a fall line: corridors only carve where they run downhill inside valleys, so channels meander from headwater to coast, taper out of the folded ranges, and never slice through ridgelines - plus basin-only lakes.
 - Biome-coordinate scaling and biome-aware surface temperature/precipitation.
+- **Full-range climate fields**: the temperature and humidity fbm are stretched by `CLIMATE_NORM` so they actually reach the `[-1, 1]` range the biome thresholds are stated on. Before that, a four-octave fbm only reached ~±0.6, which pushed the world towards the temperate middle of the biome table and left desert, jungle, taiga and snowy plains nearly unreachable.
+- **Sand is a place, not a default**: sand/sandstone is applied only to submerged beds, to a jittered coastal band around the `coast_line` contour, and to genuine desert (hot and dry) columns. Every other land surface is grass/dirt/coarse dirt/stone/gravel as before.
+- **Sealed river hydrology**: a river bed that dips below sea level is flooded up to sea level, and the "no floating water" bound holds for every channel above it.
 - Soft snow-line probability instead of a hard horizontal cutoff, and mountain caves generated without a custom chunk format.
 - Vanilla Nether and End dimensions, and normal vanilla chunk sections for the safest practical Voxy interoperability.
 

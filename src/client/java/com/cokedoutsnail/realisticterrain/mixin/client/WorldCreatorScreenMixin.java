@@ -3,6 +3,8 @@ package com.cokedoutsnail.realisticterrain.mixin.client;
 import com.cokedoutsnail.realisticterrain.client.gui.RealisticTerrainScreen;
 import com.cokedoutsnail.realisticterrain.worldgen.RealisticChunkGenerator;
 import net.minecraft.client.gui.screen.world.LevelScreenProvider;
+import net.fabricmc.api.EnvType;
+import net.fabricmc.api.Environment;
 import net.minecraft.client.gui.screen.world.WorldCreator;
 import net.minecraft.client.world.GeneratorOptionsHolder;
 import net.minecraft.world.dimension.DimensionOptions;
@@ -22,6 +24,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
  * failing to apply) entirely: whenever the pending world is currently configured to use our chunk
  * generator, this simply hands back our own screen supplier before the vanilla map lookup runs.
  */
+@Environment(EnvType.CLIENT)
 @Mixin(WorldCreator.class)
 public abstract class WorldCreatorScreenMixin {
     @Shadow
