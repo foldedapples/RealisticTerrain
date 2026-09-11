@@ -47,8 +47,6 @@ public final class TerrainCache {
             double divergent,  //  0..1  separating margins (rift/trench mask)
             double macro,      // -1..1  broad regional crustal highs
             double belt,       //  0..1  deformed fold fabric (coarse ridged field)
-            double warpX,      // domain-warp field for drainage
-            double warpZ,      // domain-warp field for drainage
             double fault       //  0..1  proximity to any active margin
     ) {}
 
@@ -122,8 +120,6 @@ public final class TerrainCache {
                 bl(n00.divergent(), n10.divergent(), n01.divergent(), n11.divergent(), sx, sz),
                 bl(n00.macro(), n10.macro(), n01.macro(), n11.macro(), sx, sz),
                 bl(n00.belt(), n10.belt(), n01.belt(), n11.belt(), sx, sz),
-                bl(n00.warpX(), n10.warpX(), n01.warpX(), n11.warpX(), sx, sz),
-                bl(n00.warpZ(), n10.warpZ(), n01.warpZ(), n11.warpZ(), sx, sz),
                 bl(n00.fault(), n10.fault(), n01.fault(), n11.fault(), sx, sz));
     }
 
@@ -213,7 +209,9 @@ public final class TerrainCache {
         double macro = Noise2D.fbm(x / (1350.0 / s.mountainFrequency()), z / (1350.0 / s.mountainFrequency()), seed + 29, 4, 2.03, .48);
         double belt = Math.max(0.0, Noise2D.ridged(x / (940.0 / s.mountainFrequency()), z / (940.0 / s.mountainFrequency()), seed + 41, 5));
         double fault = clamp(convergent + divergent);
-        return new Node(continent, plate.scalar(), clamp(convergent), clamp(divergent), macro, belt, warpX, warpZ, clamp(fault));
+        // The warp stays local to this method: it exists to deform the plate lookup, and exposing it on
+        // the interpolated node only cost two bilinear blends per sample for a value nothing read.
+        return new Node(continent, plate.scalar(), clamp(convergent), clamp(divergent), macro, belt, clamp(fault));
     }
 
     private static double clamp(double v) {
