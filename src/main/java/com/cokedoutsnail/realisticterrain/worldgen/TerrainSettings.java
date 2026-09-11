@@ -1,140 +1,314 @@
 package com.cokedoutsnail.realisticterrain.worldgen;
 
+import com.mojang.datafixers.util.Pair;
 import com.mojang.serialization.Codec;
-import com.mojang.serialization.codecs.RecordCodecBuilder;
+import com.mojang.serialization.DataResult;
+import com.mojang.serialization.DynamicOps;
+import com.mojang.serialization.MapLike;
+import com.mojang.serialization.RecordBuilder;
 
 import java.util.List;
 
 /**
- * Every tunable the terrain engine reads, serialized as a MapCodec so each world stores its own
- * configuration (see {@link #CODEC}). The chunk generator and the terrain-aware biome source each
- * carry a copy, which is why the customize screen updates both together.
+ * Every tunable the terrain engine reads, stored as one dense array indexed by
+ * {@link TerrainSetting#ordinal()} and serialized by a lenient codec.
  *
- * <p>{@link ControlPoints} is this mod's take on ReTerraForged's {@code WorldSettings.ControlPoints}:
- * named continental thresholds that decide where the shoreline sits ({@code coast}) and how deep the
- * abyssal plain goes ({@code deepOcean}). Surfacing them is what lets a player turn a drowned world
- * back into a continent without recompiling the mod, and they are the knobs the "Customize" screen
- * exposes for exactly that. They live in a nested record rather than as flat components because
- * DataFixerUpper's {@code RecordCodecBuilder.group} only has overloads up to sixteen arguments.
+ * <p>Design notes, because this replaced a 16-component record:
+ *
+ * <ul>
+ *   <li><b>One array, one descriptor table.</b> {@link TerrainSetting} owns the key, range, default
+ *       and UI category of every value; this class owns only the numbers. Adding a setting means
+ *       adding one enum constant - the codec, the sliders, the tooltips and the validation all pick
+ *       it up automatically. It also sidesteps DataFixerUpper's sixteen-argument limit on
+ *       {@code RecordCodecBuilder.group}, which is what previously forced unrelated settings into a
+ *       nested {@code ControlPoints} record.</li>
+ *   <li><b>Lenient, forward- and backward-compatible decoding.</b> The codec reads every key it
+ *       recognizes, ignores keys it does not, and falls back to the descriptor default when a value
+ *       is missing or is not a number. A world saved by an older build - which wrote the same flat
+ *       keys plus a nested {@code control_points} object - still loads; a world saved by a newer
+ *       build with settings this version has never heard of also loads; and a setting added later
+ *       simply defaults instead of failing the whole registry load. Values outside their documented
+ *       range are clamped, so a hand-edited {@code level.dat} cannot produce terrain the engine was
+ *       never tested against.</li>
+ *   <li><b>Value semantics.</b> {@link #equals}/{@link #hashCode} cover every setting and the seed
+ *       salt, because both {@code TerrainCache} and the drainage region cache key entries on
+ *       {@code settings.hashCode()} - two worlds (or two slider positions) must never share an
+ *       entry.</li>
+ * </ul>
  */
-public record TerrainSettings(
-        float mountainHeight,
-        float mountainFrequency,
-        float ridgeSharpness,
-        float erosionIntensity,
-        float riverWidth,
-        float riverFrequency,
-        float riverDepth,
-        int snowLine,
-        float biomeScale,
-        int seaLevel,
-        float roughness,
-        float vegetationDensity,
-        float continentalScale,
-        float canyonDepth,
-        long seedSalt,
-        ControlPoints controlPoints
-) {
-    /**
-     * Continentalness at which the craton baseline sits exactly on sea level - the threshold above
-     * which a column is land ({@code continent > coastLine}). Raising it moves the shoreline inland
-     * and drowns more of the world; lowering it pushes the shoreline seaward and leaves more land.
-     * Tuned so continents hold a clear majority of the surface rather than being drowned by ocean.
-     */
-    public static final float DEFAULT_COAST_LINE = -0.12f;
-    /** Depth of the abyssal plain below sea level, in blocks. */
+public final class TerrainSettings {
+    /** Number of entries in the UI (one slider per descriptor). */
+    public static final int UI_SETTING_COUNT = TerrainSetting.values().length;
+
+    /** Depth of the abyssal plain below sea level, in blocks, for the default profile. */
     public static final float DEFAULT_OCEAN_DEPTH = 100f;
-    /** Number of settings the customize screen exposes, i.e. the valid indices for {@link #withValue}. */
-    public static final int UI_SETTING_COUNT = 16;
 
-    /**
-     * The named continental thresholds, ported from ReTerraForged's
-     * {@code WorldSettings.ControlPoints}. {@code coastLine} is the continentalness at which the
-     * craton baseline sits exactly on sea level, so raising it moves the shoreline inland (less
-     * land) and lowering it pushes the shoreline seaward (more land); {@code deepOcean} is how far
-     * the abyssal plain sits below sea level.
-     */
-    public record ControlPoints(float coastLine, float deepOcean) {
-        public static final ControlPoints DEFAULT = new ControlPoints(DEFAULT_COAST_LINE, DEFAULT_OCEAN_DEPTH);
+    private final double[] values;
+    private final long seedSalt;
 
-        public static final Codec<ControlPoints> CODEC = RecordCodecBuilder.create(i -> i.group(
-                Codec.floatRange(-0.35f, 0.15f).optionalFieldOf("coast_line", DEFAULT_COAST_LINE).forGetter(ControlPoints::coastLine),
-                Codec.floatRange(0.0f, 300.0f).optionalFieldOf("ocean_depth", DEFAULT_OCEAN_DEPTH).forGetter(ControlPoints::deepOcean)
-        ).apply(i, ControlPoints::new));
+    private TerrainSettings(double[] values, long seedSalt) {
+        this.values = values;
+        this.seedSalt = seedSalt;
     }
 
-    public static final TerrainSettings DEFAULT = new TerrainSettings(
-            1f, 1f, 1f, 1f, 1f, 1f, 1f, 430, 1f, 96, 1f, 1f, 1f, 1f, 0L,
-            ControlPoints.DEFAULT);
-
-    /** Convenience: continentalness of the shoreline (see {@link ControlPoints}). */
-    public float coastLine() { return controlPoints.coastLine(); }
-
-    /** Convenience: abyssal depth below sea level (see {@link ControlPoints}). */
-    public float oceanDepth() { return controlPoints.deepOcean(); }
-
-    public static final Codec<TerrainSettings> CODEC = RecordCodecBuilder.create(i -> i.group(
-            Codec.floatRange(0.25f, 3.0f).fieldOf("mountain_height").forGetter(TerrainSettings::mountainHeight),
-            Codec.floatRange(0.25f, 3.0f).fieldOf("mountain_frequency").forGetter(TerrainSettings::mountainFrequency),
-            Codec.floatRange(0.25f, 3.0f).fieldOf("ridge_sharpness").forGetter(TerrainSettings::ridgeSharpness),
-            Codec.floatRange(0.0f, 2.5f).fieldOf("erosion_intensity").forGetter(TerrainSettings::erosionIntensity),
-            Codec.floatRange(0.25f, 4.0f).fieldOf("river_width").forGetter(TerrainSettings::riverWidth),
-            Codec.floatRange(0.25f, 3.0f).fieldOf("river_frequency").forGetter(TerrainSettings::riverFrequency),
-            Codec.floatRange(0.25f, 3.0f).fieldOf("river_depth").forGetter(TerrainSettings::riverDepth),
-            Codec.intRange(96, 1800).fieldOf("snow_line").forGetter(TerrainSettings::snowLine),
-            Codec.floatRange(0.25f, 4.0f).fieldOf("biome_scale").forGetter(TerrainSettings::biomeScale),
-            Codec.intRange(-32, 512).fieldOf("sea_level").forGetter(TerrainSettings::seaLevel),
-            Codec.floatRange(0.2f, 3.0f).fieldOf("roughness").forGetter(TerrainSettings::roughness),
-            Codec.floatRange(0.0f, 3.0f).optionalFieldOf("vegetation_density", 1.0f).forGetter(TerrainSettings::vegetationDensity),
-            Codec.floatRange(0.5f, 2.5f).optionalFieldOf("continental_scale", 1.0f).forGetter(TerrainSettings::continentalScale),
-            Codec.floatRange(0.0f, 2.5f).optionalFieldOf("canyon_depth", 1.0f).forGetter(TerrainSettings::canyonDepth),
-            Codec.LONG.optionalFieldOf("seed_salt", 0L).forGetter(TerrainSettings::seedSalt),
-            ControlPoints.CODEC.optionalFieldOf("control_points", ControlPoints.DEFAULT).forGetter(TerrainSettings::controlPoints)
-    ).apply(i, TerrainSettings::new));
-
-    /**
-     * The settings in the order the customize screen addresses them ({@code 0} = mountain height,
-     * ... {@code 15} = ocean depth). The integers are widened to double only for this array; every
-     * value is far inside double's exact-integer range.
-     */
-    private double[] uiValues() {
-        return new double[]{mountainHeight, mountainFrequency, ridgeSharpness, erosionIntensity,
-                riverWidth, riverFrequency, riverDepth, snowLine, biomeScale, seaLevel, roughness,
-                vegetationDensity, continentalScale, canyonDepth,
-                controlPoints.coastLine(), controlPoints.deepOcean()};
+    /** The descriptor defaults, clamped so the table itself can never declare an illegal default. */
+    private static double[] defaults() {
+        TerrainSetting[] keys = TerrainSetting.values();
+        double[] v = new double[keys.length];
+        for (TerrainSetting k : keys) v[k.ordinal()] = k.clamp(k.defaultValue());
+        return v;
     }
 
-    /** Reads one setting by its customize-screen index (see {@link #withValue}). */
+    /** Builds settings from descriptor defaults with a single value replaced. */
+    public static TerrainSettings of(TerrainSetting key, double value) {
+        double[] v = defaults();
+        v[key.ordinal()] = key.clamp(value);
+        return new TerrainSettings(v, 0L);
+    }
+
+    /** Builds settings from a raw array already indexed by {@link TerrainSetting#ordinal()}. */
+    private static TerrainSettings fromRaw(double[] values, long seedSalt) {
+        double[] v = defaults();
+        for (TerrainSetting k : TerrainSetting.values()) {
+            v[k.ordinal()] = k.clamp(values[k.ordinal()]);
+        }
+        return new TerrainSettings(v, seedSalt);
+    }
+
+    public static final TerrainSettings DEFAULT = new TerrainSettings(defaults(), 0L);
+
+    /** Raw (already clamped) value of one setting. */
+    public double raw(TerrainSetting key) {
+        return values[key.ordinal()];
+    }
+
+    public long seedSalt() {
+        return seedSalt;
+    }
+
+    /**
+     * Lenient settings codec (see the class javadoc). Writes the flat {@code key: number} object the
+     * world save has always used, so existing worlds keep loading.
+     */
+    public static final Codec<TerrainSettings> CODEC = new Codec<>() {
+        @Override
+        public <T> DataResult<Pair<TerrainSettings, T>> decode(DynamicOps<T> ops, T input) {
+            MapLike<T> map = ops.getMap(input).result().orElse(null);
+            if (map == null) {
+                // Not an object at all - keep the world loadable with defaults rather than failing
+                // the whole datapack registry load.
+                return DataResult.success(Pair.of(DEFAULT, input));
+            }
+            double[] v = defaults();
+            for (TerrainSetting k : TerrainSetting.values()) {
+                Double d = number(ops, map.get(k.jsonKey()));
+                if (d != null) v[k.ordinal()] = k.clamp(d);
+            }
+            // Legacy nested control points, as written by builds before the descriptor table.
+            MapLike<T> cp = ops.getMap(map.get("control_points")).result().orElse(null);
+            if (cp != null) {
+                Double coast = number(ops, cp.get("coast_line"));
+                Double deep = number(ops, cp.get("ocean_depth"));
+                if (coast != null) v[TerrainSetting.COAST_LINE.ordinal()] = TerrainSetting.COAST_LINE.clamp(coast);
+                if (deep != null) v[TerrainSetting.OCEAN_DEPTH.ordinal()] = TerrainSetting.OCEAN_DEPTH.clamp(deep);
+            }
+            Double salt = number(ops, map.get("seed_salt"));
+            return DataResult.success(Pair.of(fromRaw(v, salt == null ? 0L : salt.longValue()), input));
+        }
+
+        @Override
+        public <T> DataResult<T> encode(TerrainSettings s, DynamicOps<T> ops, T prefix) {
+            RecordBuilder<T> builder = ops.mapBuilder();
+            for (TerrainSetting k : TerrainSetting.values()) {
+                builder.add(k.jsonKey(), ops.createDouble(s.values[k.ordinal()]));
+            }
+            builder.add("seed_salt", ops.createLong(s.seedSalt));
+            return builder.build(prefix);
+        }
+
+        private <T> Double number(DynamicOps<T> ops, T value) {
+            if (value == null) return null;
+            Number n = ops.getNumberValue(value).result().orElse(null);
+            if (n != null) return n.doubleValue();
+            Boolean b = ops.getBooleanValue(value).result().orElse(null);
+            return b == null ? null : (b ? 1.0 : 0.0);
+        }
+    };
+
+    // ------------------------------------------------------------------
+    // Typed accessors. These keep call sites terse and, more importantly,
+    // mean the rest of the engine never indexes the array by hand - a
+    // mistyped ordinal is a compile error here, not a silent terrain bug.
+    // ------------------------------------------------------------------
+
+    private float f(TerrainSetting key) { return (float) values[key.ordinal()]; }
+    private int i(TerrainSetting key) { return (int) Math.rint(values[key.ordinal()]); }
+
+    public float mountainHeight() { return f(TerrainSetting.MOUNTAIN_HEIGHT); }
+    public float mountainFrequency() { return f(TerrainSetting.MOUNTAIN_FREQUENCY); }
+    public float ridgeSharpness() { return f(TerrainSetting.RIDGE_SHARPNESS); }
+    public float erosionIntensity() { return f(TerrainSetting.EROSION_INTENSITY); }
+    public float riverWidth() { return f(TerrainSetting.RIVER_WIDTH); }
+    public float riverFrequency() { return f(TerrainSetting.RIVER_FREQUENCY); }
+    public float riverDepth() { return f(TerrainSetting.RIVER_DEPTH); }
+    public int snowLine() { return i(TerrainSetting.SNOW_LINE); }
+    public float biomeScale() { return f(TerrainSetting.BIOME_SCALE); }
+    public int seaLevel() { return i(TerrainSetting.SEA_LEVEL); }
+    public float roughness() { return f(TerrainSetting.ROUGHNESS); }
+    public float vegetationDensity() { return f(TerrainSetting.VEGETATION_DENSITY); }
+    public float continentalScale() { return f(TerrainSetting.CONTINENTAL_SCALE); }
+    public float canyonDepth() { return f(TerrainSetting.CANYON_DEPTH); }
+    public float coastLine() { return f(TerrainSetting.COAST_LINE); }
+    public float oceanDepth() { return f(TerrainSetting.OCEAN_DEPTH); }
+    public int maximumTerrainY() { return i(TerrainSetting.MAXIMUM_TERRAIN_Y); }
+    public float plateScale() { return f(TerrainSetting.PLATE_SCALE); }
+    public float tectonicActivity() { return f(TerrainSetting.TECTONIC_ACTIVITY); }
+    public float mountainRangeWidth() { return f(TerrainSetting.MOUNTAIN_RANGE_WIDTH); }
+    public float mountainUplift() { return f(TerrainSetting.MOUNTAIN_UPLIFT); }
+    public float riverDensity() { return f(TerrainSetting.RIVER_DENSITY); }
+    public float tributaryDensity() { return f(TerrainSetting.TRIBUTARY_DENSITY); }
+    public float meanderStrength() { return f(TerrainSetting.MEANDER_STRENGTH); }
+    public float lakeFrequency() { return f(TerrainSetting.LAKE_FREQUENCY); }
+    public float wetlandFrequency() { return f(TerrainSetting.WETLAND_FREQUENCY); }
+    public float drainageScale() { return f(TerrainSetting.DRAINAGE_SCALE); }
+    public float caveGeneration() { return f(TerrainSetting.CAVE_GENERATION); }
+    public boolean generateStructures() { return raw(TerrainSetting.GENERATE_STRUCTURES) >= 0.5; }
+
+    /** The two named continental control points, derived from their descriptor entries. */
+    public ControlPoints controlPoints() {
+        return new ControlPoints(coastLine(), oceanDepth());
+    }
+
+    /** Reads one setting by its slider index (see {@link #withValue}). */
     public double getValue(int index) {
-        return uiValues()[index];
+        TerrainSetting[] keys = TerrainSetting.values();
+        return values[keys[Math.max(0, Math.min(keys.length - 1, index))].ordinal()];
     }
 
     /**
-     * Returns a copy with exactly one setting replaced, addressed by the index the customize screen
-     * uses ({@code 0} = mountain height, ... {@code 15} = ocean depth).
-     *
-     * <p>Keeping the index &rarr; component mapping here rather than in the GUI means the screen
-     * never has to spell out a seventeen-argument constructor call, and a newly added setting only
-     * has to be wired up in one place.
+     * Returns a copy with exactly one setting replaced, addressed by its slider index. The index
+     * &rarr; setting mapping lives in {@link TerrainSetting}'s declaration order, so the GUI never
+     * spells out a constructor call and a new setting needs no wiring here.
      */
     public TerrainSettings withValue(int index, double value) {
-        double[] v = uiValues();
-        v[index] = value;
-        return new TerrainSettings(
-                (float) v[0], (float) v[1], (float) v[2], (float) v[3], (float) v[4], (float) v[5],
-                (float) v[6], (int) v[7], (float) v[8], (int) v[9], (float) v[10], (float) v[11],
-                (float) v[12], (float) v[13], seedSalt,
-                new ControlPoints((float) v[14], (float) v[15]));
+        TerrainSetting[] keys = TerrainSetting.values();
+        if (index < 0 || index >= keys.length) return this;
+        return with(keys[index], value);
     }
+
+    /** Returns a copy with one named setting replaced, clamped to its documented range. */
+    public TerrainSettings with(TerrainSetting key, double value) {
+        double[] v = values.clone();
+        v[key.ordinal()] = key.clamp(value);
+        return new TerrainSettings(v, seedSalt);
+    }
+
+    /** Returns a copy with a different seed salt, which decorrelates otherwise identical worlds. */
+    public TerrainSettings withSeedSalt(long salt) {
+        return new TerrainSettings(values.clone(), salt);
+    }
+
+    /**
+     * The named continental thresholds, following ReTerraForged's
+     * {@code WorldSettings.ControlPoints}. Retained as a distinct type only so older saves that
+     * nested {@code control_points} still decode; the engine now reads {@link #coastLine()} and
+     * {@link #oceanDepth()} directly.
+     */
+    public record ControlPoints(float coastLine, float deepOcean) {
+        public static final ControlPoints DEFAULT = new ControlPoints(-0.12f, DEFAULT_OCEAN_DEPTH);
+    }
+
+    // ------------------------------------------------------------------
+    // Profiles
+    // ------------------------------------------------------------------
 
     /** A named world-type profile shown in the Customize screen; the first is the default style. */
     public record Profile(String nameKey, TerrainSettings settings) {}
 
+    /** Builds a profile by applying {@code (TerrainSetting, Number)} override pairs to the defaults. */
+    private static TerrainSettings profile(Object... keyValuePairs) {
+        TerrainSettings s = DEFAULT;
+        for (int i = 0; i < keyValuePairs.length; i += 2) {
+            s = s.with((TerrainSetting) keyValuePairs[i], ((Number) keyValuePairs[i + 1]).doubleValue());
+        }
+        return s;
+    }
+
     public static final List<Profile> PROFILES = List.of(
-            new Profile("realisticterrain.profile.continental", new TerrainSettings(1.0f, 0.9f, 0.9f, 1.0f, 1.0f, 0.8f, 1.0f, 430, 1.1f, 96, 1.0f, 1.0f, 1.0f, 1.0f, 0L, ControlPoints.DEFAULT)),
-            new Profile("realisticterrain.profile.alpine",      new TerrainSettings(2.2f, 0.7f, 1.5f, 1.3f, 0.8f, 0.9f, 1.2f, 360, 1.0f, 96, 1.0f, 0.7f, 1.0f, 0.9f, 0L, new ControlPoints(DEFAULT_COAST_LINE, 120f))),
-            new Profile("realisticterrain.profile.archipelago", new TerrainSettings(0.9f, 1.3f, 0.8f, 1.1f, 1.2f, 1.2f, 1.0f, 430, 1.2f, 76, 1.0f, 1.2f, 0.8f, 1.0f, 0L, new ControlPoints(-0.14f, 90f))),
-            new Profile("realisticterrain.profile.rolling",     new TerrainSettings(0.55f, 1.1f, 0.6f, 0.8f, 1.1f, 1.0f, 0.8f, 500, 1.0f, 96, 0.8f, 1.3f, 1.1f, 0.6f, 0L, new ControlPoints(-0.02f, 80f))),
-            new Profile("realisticterrain.profile.canyons",     new TerrainSettings(1.4f, 0.8f, 1.2f, 2.2f, 1.4f, 0.9f, 2.2f, 480, 0.9f, 96, 1.1f, 0.6f, 1.2f, 2.2f, 0L, new ControlPoints(DEFAULT_COAST_LINE, 130f)))
+            new Profile("realisticterrain.profile.continental",
+                    profile(TerrainSetting.BIOME_SCALE, 1.1, TerrainSetting.RIVER_FREQUENCY, 0.8)),
+            new Profile("realisticterrain.profile.alpine",
+                    profile(TerrainSetting.MOUNTAIN_HEIGHT, 2.2, TerrainSetting.MOUNTAIN_FREQUENCY, 0.7,
+                            TerrainSetting.RIDGE_SHARPNESS, 1.5, TerrainSetting.EROSION_INTENSITY, 1.3,
+                            TerrainSetting.RIVER_WIDTH, 0.8, TerrainSetting.RIVER_DEPTH, 1.2,
+                            TerrainSetting.SNOW_LINE, 360, TerrainSetting.VEGETATION_DENSITY, 0.7,
+                            TerrainSetting.CANYON_DEPTH, 0.9, TerrainSetting.MOUNTAIN_RANGE_WIDTH, 1.2,
+                            TerrainSetting.MOUNTAIN_UPLIFT, 1.4, TerrainSetting.OCEAN_DEPTH, 120)),
+            new Profile("realisticterrain.profile.archipelago",
+                    profile(TerrainSetting.MOUNTAIN_HEIGHT, 0.9, TerrainSetting.MOUNTAIN_FREQUENCY, 1.3,
+                            TerrainSetting.RIDGE_SHARPNESS, 0.8, TerrainSetting.EROSION_INTENSITY, 1.1,
+                            TerrainSetting.RIVER_WIDTH, 1.2, TerrainSetting.RIVER_FREQUENCY, 1.2,
+                            TerrainSetting.BIOME_SCALE, 1.2, TerrainSetting.SEA_LEVEL, 76,
+                            TerrainSetting.CONTINENTAL_SCALE, 0.8, TerrainSetting.COAST_LINE, -0.14,
+                            TerrainSetting.OCEAN_DEPTH, 90, TerrainSetting.PLATE_SCALE, 0.7)),
+            new Profile("realisticterrain.profile.rolling",
+                    profile(TerrainSetting.MOUNTAIN_HEIGHT, 0.55, TerrainSetting.MOUNTAIN_FREQUENCY, 1.1,
+                            TerrainSetting.RIDGE_SHARPNESS, 0.6, TerrainSetting.EROSION_INTENSITY, 0.8,
+                            TerrainSetting.RIVER_WIDTH, 1.1, TerrainSetting.RIVER_DEPTH, 0.8,
+                            TerrainSetting.SNOW_LINE, 500, TerrainSetting.ROUGHNESS, 0.8,
+                            TerrainSetting.VEGETATION_DENSITY, 1.3, TerrainSetting.CONTINENTAL_SCALE, 1.1,
+                            TerrainSetting.CANYON_DEPTH, 0.6, TerrainSetting.COAST_LINE, -0.02,
+                            TerrainSetting.OCEAN_DEPTH, 80, TerrainSetting.TECTONIC_ACTIVITY, 0.4)),
+            new Profile("realisticterrain.profile.canyons",
+                    profile(TerrainSetting.MOUNTAIN_HEIGHT, 1.4, TerrainSetting.MOUNTAIN_FREQUENCY, 0.8,
+                            TerrainSetting.RIDGE_SHARPNESS, 1.2, TerrainSetting.EROSION_INTENSITY, 2.2,
+                            TerrainSetting.RIVER_WIDTH, 1.4, TerrainSetting.RIVER_DEPTH, 2.2,
+                            TerrainSetting.SNOW_LINE, 480, TerrainSetting.BIOME_SCALE, 0.9,
+                            TerrainSetting.VEGETATION_DENSITY, 0.6, TerrainSetting.CONTINENTAL_SCALE, 1.2,
+                            TerrainSetting.CANYON_DEPTH, 2.2, TerrainSetting.OCEAN_DEPTH, 130)),
+            new Profile("realisticterrain.profile.riverlands",
+                    profile(TerrainSetting.MOUNTAIN_HEIGHT, 0.8, TerrainSetting.RIDGE_SHARPNESS, 0.8,
+                            TerrainSetting.EROSION_INTENSITY, 1.2, TerrainSetting.RIVER_WIDTH, 1.3,
+                            TerrainSetting.RIVER_FREQUENCY, 1.1, TerrainSetting.RIVER_DENSITY, 1.8,
+                            TerrainSetting.TRIBUTARY_DENSITY, 1.8, TerrainSetting.MEANDER_STRENGTH, 1.6,
+                            TerrainSetting.LAKE_FREQUENCY, 2.0, TerrainSetting.WETLAND_FREQUENCY, 2.0,
+                            TerrainSetting.CONTINENTAL_SCALE, 1.3, TerrainSetting.COAST_LINE, -0.06,
+                            TerrainSetting.VEGETATION_DENSITY, 1.4)),
+            new Profile("realisticterrain.profile.earthlike",
+                    profile(TerrainSetting.MOUNTAIN_HEIGHT, 1.15, TerrainSetting.MOUNTAIN_FREQUENCY, 0.85,
+                            TerrainSetting.RIDGE_SHARPNESS, 1.1, TerrainSetting.EROSION_INTENSITY, 1.15,
+                            TerrainSetting.RIVER_WIDTH, 1.1, TerrainSetting.RIVER_FREQUENCY, 0.9,
+                            TerrainSetting.RIVER_DEPTH, 1.1, TerrainSetting.SNOW_LINE, 470,
+                            TerrainSetting.BIOME_SCALE, 1.05, TerrainSetting.VEGETATION_DENSITY, 1.15,
+                            TerrainSetting.CONTINENTAL_SCALE, 1.05, TerrainSetting.CANYON_DEPTH, 1.1,
+                            TerrainSetting.COAST_LINE, -0.10, TerrainSetting.OCEAN_DEPTH, 115,
+                            TerrainSetting.PLATE_SCALE, 1.15, TerrainSetting.TECTONIC_ACTIVITY, 1.15,
+                            TerrainSetting.MOUNTAIN_RANGE_WIDTH, 1.15, TerrainSetting.MOUNTAIN_UPLIFT, 1.2,
+                            TerrainSetting.RIVER_DENSITY, 1.2, TerrainSetting.TRIBUTARY_DENSITY, 1.2,
+                            TerrainSetting.MEANDER_STRENGTH, 1.2, TerrainSetting.LAKE_FREQUENCY, 1.2,
+                            TerrainSetting.WETLAND_FREQUENCY, 1.2, TerrainSetting.MAXIMUM_TERRAIN_Y, 1100))
     );
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (!(o instanceof TerrainSettings other)) return false;
+        return seedSalt == other.seedSalt && java.util.Arrays.equals(values, other.values);
+    }
+
+    @Override
+    public int hashCode() {
+        return 31 * java.util.Arrays.hashCode(values) + Long.hashCode(seedSalt);
+    }
+
+    @Override
+    public String toString() {
+        StringBuilder sb = new StringBuilder("TerrainSettings[");
+        TerrainSetting[] keys = TerrainSetting.values();
+        for (int i = 0; i < keys.length; i++) {
+            if (i > 0) sb.append(", ");
+            sb.append(keys[i].jsonKey()).append('=').append(values[i]);
+        }
+        return sb.append(", seed_salt=").append(seedSalt).append(']').toString();
+    }
 }

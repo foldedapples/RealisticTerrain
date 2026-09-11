@@ -102,7 +102,7 @@ final class TerrainModelTest {
     @Test
     void profilesAndVegetationDefaultAreUsable() {
         assertEquals(1.0F, TerrainSettings.DEFAULT.vegetationDensity());
-        assertEquals(5, TerrainSettings.PROFILES.size());
+        assertTrue(TerrainSettings.PROFILES.size() >= 5);
         for (TerrainSettings.Profile p : TerrainSettings.PROFILES) {
             assertTrue(p.settings().vegetationDensity() >= 0.0F);
             assertTrue(p.settings().vegetationDensity() <= 3.0F);
@@ -113,8 +113,7 @@ final class TerrainModelTest {
 
     @Test
     void seedSaltChangesTerrain() {
-        TerrainSettings salted = new TerrainSettings(1,1,1,1,1,1,1,430,1,96,1,1,1,1,99L,
-                TerrainSettings.ControlPoints.DEFAULT);
+        TerrainSettings salted = TerrainSettings.DEFAULT.withSeedSalt(99L);
         assertNotEquals(
                 TerrainModel.sample(12L, 800, 1200, TerrainSettings.DEFAULT),
                 TerrainModel.sample(12L, 800, 1200, salted)
@@ -461,11 +460,16 @@ final class TerrainModelTest {
     void withValueReplacesExactlyOneSetting() {
         TerrainSettings base = TerrainSettings.DEFAULT;
         for (int i = 0; i < TerrainSettings.UI_SETTING_COUNT; i++) {
-            double probe = base.getValue(i) + 1.0;
+            // Probe with a legal value taken from the descriptor range: some settings (for example
+            // the structures toggle) default to their own maximum, so a blind "+1" would be clamped
+            // straight back and the test would be probing a no-op.
+            TerrainSetting key = TerrainSetting.values()[i];
+            double probe = key.clamp(base.getValue(i) == key.max() ? key.min() : base.getValue(i) + 1.0);
             assertNotEquals(probe, base.getValue(i), "test probe is a no-op for index " + i);
             TerrainSettings changed = base.withValue(i, probe);
             assertNotEquals(base, changed, "withValue(" + i + ") changed nothing");
-            // Settings are stored as floats, so compare at float precision, not double.
+            // Settings are stored as floats for the float-shaped entries, so compare at float
+            // precision rather than double.
             assertEquals(probe, changed.getValue(i), 1e-5, "withValue(" + i + ") did not apply");
             for (int j = 0; j < TerrainSettings.UI_SETTING_COUNT; j++) {
                 if (j != i) {

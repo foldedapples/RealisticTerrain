@@ -9,3 +9,7 @@ out/
 *.log
 hs_err_pid*
 replay_pid*
+
+# Diagnostic PNG map exports (see TerrainDiagnostics) and scratch build logs.
+diagnostics/
+/*.txt

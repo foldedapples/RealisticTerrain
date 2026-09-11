@@ -4,7 +4,7 @@ A Fabric 1.21.11 world-generation mod for continent-scale mountain ranges, broad
 
 ## Status
 
-This repository contains a working **0.1.0 alpha**. It compiles against Minecraft 1.21.11, launches on Fabric Loader 0.19.5, loads its registries, creates a `realisticterrain:realistic` world, and serializes the custom generator into `level.dat`.
+This repository contains a working **0.3.0 alpha**. It compiles against Minecraft 1.21.11, launches on Fabric Loader 0.19.5, loads its registries, creates a `realisticterrain:realistic` world, and serializes the custom generator into `level.dat`.
 
 The generator is intentionally source-first and experimental. Back up worlds before updating the mod; changing terrain settings after chunks exist will produce borders between old and new terrain.
 
