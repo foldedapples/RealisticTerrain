@@ -37,19 +37,42 @@ public final class TerrainBiomeSource extends BiomeSource {
     private final BiomeSource fallback;
     private final float scale;
     private final TerrainSettings settings;
-    private final Map<Identifier, RegistryEntry<Biome>> byId = new HashMap<>();
+    // Built lazily by ensureBiomeLookup() - NOT in the constructor. See that method for why.
+    private Map<Identifier, RegistryEntry<Biome>> byId;
     private RegistryEntry<Biome> defaultBiome;
+    private volatile boolean biomeLookupReady;
     private long terrainSeed = 0x5245414C49535449L; // transient; overwritten by the chunk generator
 
     public TerrainBiomeSource(BiomeSource fallback, float scale, TerrainSettings settings) {
         this.fallback = fallback;
         this.scale = scale;
         this.settings = settings;
+    }
+
+    /**
+     * Resolves the identifier -> biome lookup from the fallback source, once, on first use.
+     *
+     * <p>This must not run from the constructor. The datapack registry loader decodes the world
+     * preset while the {@code multi_noise_biome_source_parameter_list} registry is still unbound,
+     * and {@link BiomeSource#getBiomes()} on a preset-backed fallback resolves
+     * {@code minecraft:overworld} immediately - throwing
+     * {@code IllegalStateException: Trying to access unbound value ...} and aborting the entire
+     * registry load (which is what froze the client on "Preparing for world creation..."). By
+     * world-generation time the registries are bound, so the first real {@link #getBiome} call
+     * builds the lookup safely instead.
+     */
+    private synchronized void ensureBiomeLookup() {
+        if (biomeLookupReady) return;
+        Map<Identifier, RegistryEntry<Biome>> map = new HashMap<>();
+        RegistryEntry<Biome> fallbackDefault = null;
         for (RegistryEntry<Biome> entry : fallback.getBiomes()) {
-            entry.getKey().ifPresent(key -> byId.put(key.getValue(), entry));
-            if (defaultBiome == null) defaultBiome = entry;
+            entry.getKey().ifPresent(key -> map.put(key.getValue(), entry));
+            if (fallbackDefault == null) fallbackDefault = entry;
         }
-        if (defaultBiome == null) throw new IllegalArgumentException("Fallback biome source produced no biomes");
+        if (fallbackDefault == null) throw new IllegalStateException("Fallback biome source produced no biomes");
+        this.byId = map;
+        this.defaultBiome = fallbackDefault;
+        this.biomeLookupReady = true;
     }
 
     public BiomeSource fallback() {
@@ -89,6 +112,7 @@ public final class TerrainBiomeSource extends BiomeSource {
 
     @Override
     public RegistryEntry<Biome> getBiome(int biomeX, int biomeY, int biomeZ, MultiNoiseUtil.MultiNoiseSampler sampler) {
+        ensureBiomeLookup();
         double x = biomeX * 4.0 / scale;
         double z = biomeZ * 4.0 / scale;
         return pick(x, z, TerrainModel.sample(terrainSeed, x, z, settings));
@@ -160,6 +184,7 @@ public final class TerrainBiomeSource extends BiomeSource {
     }
 
     private RegistryEntry<Biome> biome(RegistryKey<Biome> key) {
+        ensureBiomeLookup();
         RegistryEntry<Biome> entry = byId.get(key.getValue());
         return entry != null ? entry : defaultBiome;
     }

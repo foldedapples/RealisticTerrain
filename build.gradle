@@ -110,6 +110,20 @@ def validateModMetadata = tasks.register('validateModMetadata') {
                     }
                 }
 
+                // Fabric logs "Unsupported root entry" warnings for anything outside its schema
+                // (e.g. a stray "credits" field). Fail here instead so the launch log stays clean.
+                def allowedRootKeys = [
+                        'schemaVersion', 'id', 'version', 'name', 'description', 'authors',
+                        'contributors', 'contact', 'license', 'icon', 'environment', 'entrypoints',
+                        'mixins', 'accessWidener', 'jars', 'languageAdapters', 'depends',
+                        'recommends', 'suggests', 'conflicts', 'breaks', 'provides', 'custom'
+                ] as Set
+                json.keySet().each { key ->
+                    if (!allowedRootKeys.contains(key)) {
+                        problems << "fabric.mod.json: unsupported root entry '${key}' (Fabric rejects/warns on unknown keys)"
+                    }
+                }
+
                 peopleKeys.each { key ->
                     if (!json.containsKey(key)) {
                         return

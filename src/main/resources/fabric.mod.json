@@ -5,8 +5,12 @@
   "name": "Realistic Terrain",
   "description": "Plate-tectonic world generation: folded mountain ranges, rift valleys, hydrological canyons, geological rock strata, terrain-matched biomes and slope-aware forests, with a configurable world preset.",
   "authors": ["cokedoutsnail"],
-  "contributors": ["Won-G (TerraForged / ReTerraForged)"],
-  "credits": "Terrain mathematics and architecture inspired by TerraForged and ReTerraForged by Won-G (https://github.com/won-g).",
+  "contributors": [
+    {
+      "name": "Won-G (TerraForged / ReTerraForged)",
+      "contact": { "homepage": "https://github.com/won-g" }
+    }
+  ],
   "license": "MIT",
   "environment": "*",
   "entrypoints": {
