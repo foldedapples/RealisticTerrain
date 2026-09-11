@@ -229,6 +229,7 @@ public final class RealisticChunkGenerator extends ChunkGenerator {
      */
     @Override public void generateFeatures(StructureWorldAccess world, Chunk chunk, StructureAccessor structureAccessor){
         super.generateFeatures(world, chunk, structureAccessor);
+        stripIsolatedSprings(world, chunk);
         if(settings.vegetationDensity() <= 0.02f) return;
         long seed=terrainSeedValue();
         // Fallback before any noise chunk ran; still deterministic per world.
@@ -258,6 +259,44 @@ public final class RealisticChunkGenerator extends ChunkGenerator {
     }
 
     private static double clamp01(double v){ return v<0?0:(v>1?1:v); }
+
+    /**
+     * Vanilla's FLUID_SPRINGS decoration step litters underground open space with lone, non-flowing
+     * water (and lava) source blocks - and in a world this tall, whose caves run far higher than
+     * vanilla's ever do (see {@link TerrainModel#cave}), that step fires far more often than it does
+     * in vanilla. The result reads as stray "water droplets" scattered through the caves with no
+     * outlet, never flowing anywhere. Every body of water this generator itself carves - ocean,
+     * river, lake, or a flooded cave pocket below {@code seaLevel - 18} - is always several blocks
+     * across by construction, so a WATER block with no WATER neighbour at all can only be one of
+     * these stray vanilla springs: safe to clear without ever touching a real body of water.
+     */
+    private static void stripIsolatedSprings(StructureWorldAccess world, Chunk chunk){
+        ChunkPos cp = chunk.getPos();
+        BlockPos.Mutable p = new BlockPos.Mutable();
+        for(int lx=0; lx<16; lx++){
+            for(int lz=0; lz<16; lz++){
+                int x = cp.getStartX()+lx, z = cp.getStartZ()+lz;
+                int surface = chunk.sampleHeightmap(Heightmap.Type.WORLD_SURFACE_WG, lx, lz);
+                int bottom = Math.max(MIN_Y+5, surface-96);
+                for(int y=bottom; y<surface-4; y++){
+                    p.set(x,y,z);
+                    if(world.getBlockState(p).isOf(Blocks.WATER) && isIsolatedWater(world,x,y,z)){
+                        world.setBlockState(p, Blocks.AIR.getDefaultState(), 0);
+                    }
+                }
+            }
+        }
+    }
+
+    private static boolean isIsolatedWater(StructureWorldAccess world,int x,int y,int z){
+        BlockPos.Mutable n = new BlockPos.Mutable();
+        return !world.getBlockState(n.set(x+1,y,z)).isOf(Blocks.WATER)
+                && !world.getBlockState(n.set(x-1,y,z)).isOf(Blocks.WATER)
+                && !world.getBlockState(n.set(x,y+1,z)).isOf(Blocks.WATER)
+                && !world.getBlockState(n.set(x,y-1,z)).isOf(Blocks.WATER)
+                && !world.getBlockState(n.set(x,y,z+1)).isOf(Blocks.WATER)
+                && !world.getBlockState(n.set(x,y,z-1)).isOf(Blocks.WATER);
+    }
 
     /** Chooses a vanilla tree placed-feature id (or null for no tree) from terrain climate, slope and soil. */
     private static Identifier treeSpecies(TerrainModel.Sample sm,TerrainSettings s,double slope){

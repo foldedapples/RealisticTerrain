@@ -133,8 +133,16 @@ public final class TerrainBiomeSource extends BiomeSource {
             if (depth > 4) return biome(BiomeKeys.OCEAN);
             return biome(BiomeKeys.BEACH);
         }
-        // Coastal fringe.
-        if (h < settings.seaLevel() + 3) return biome(BiomeKeys.BEACH);
+        // Coastal fringe. Gating this on raw height alone - "within N blocks of sea level" - turned
+        // every inland flat that happened to sit near sea level (a wide plain, the floor of a rift
+        // valley, the apron below a range) into beach as well, because at these terrain scales a
+        // great deal of ordinary low ground sits within a few blocks of sea level without being
+        // anywhere near the coast. Continentalness is the field the coastline is actually drawn
+        // from (see TerrainModel#tectonicBase), so gating on genuine proximity to the coast line in
+        // THAT field - not the derived height - is what confines beach to the coast itself, the way
+        // ReTerraForged's COAST control point does.
+        boolean nearCoastline = s.continent() - settings.coastLine() < 0.05;
+        if (nearCoastline && h < settings.seaLevel() + 5) return biome(BiomeKeys.BEACH);
 
         // Tectonic refinements.
         boolean riftValley = s.divergent() > 0.55 && h < settings.seaLevel() + 70; // damp rift corridor

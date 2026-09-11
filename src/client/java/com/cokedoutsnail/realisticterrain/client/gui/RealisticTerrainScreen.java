@@ -10,6 +10,7 @@ import net.minecraft.client.gui.screen.world.CreateWorldScreen;
 import net.minecraft.client.gui.widget.ButtonWidget;
 import net.minecraft.client.world.GeneratorOptionsHolder;
 import net.minecraft.text.Text;
+import net.minecraft.world.dimension.DimensionOptions;
 
 import java.util.concurrent.ThreadLocalRandom;
 
@@ -38,8 +39,14 @@ public final class RealisticTerrainScreen extends Screen {
     public RealisticTerrainScreen(CreateWorldScreen parent, GeneratorOptionsHolder holder) {
         super(Text.translatable("realisticterrain.customize.title"));
         this.parent = parent;
-        this.s = holder.selectedDimensions().getChunkGenerator() instanceof RealisticChunkGenerator generator
-                ? generator.settings() : TerrainSettings.DEFAULT;
+        // GeneratorOptionsHolder has no direct "selected dimensions" accessor - only the
+        // registry every DimensionOptions (overworld/nether/end) lives in - so the overworld's
+        // chunk generator has to be looked up by its well-known registry key.
+        this.s = holder.dimensionOptionsRegistry().getOptionalValue(DimensionOptions.OVERWORLD)
+                .map(DimensionOptions::chunkGenerator)
+                .filter(generator -> generator instanceof RealisticChunkGenerator)
+                .map(generator -> ((RealisticChunkGenerator) generator).settings())
+                .orElse(TerrainSettings.DEFAULT);
     }
 
     /**
