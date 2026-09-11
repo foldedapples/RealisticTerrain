@@ -3,6 +3,9 @@ package com.cokedoutsnail.realisticterrain.worldgen;
 import com.cokedoutsnail.realisticterrain.noise.CellularNoise;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.*;
 
 final class TerrainModelTest {
@@ -467,6 +470,149 @@ final class TerrainModelTest {
                             "withValue(" + i + ") also changed setting " + j);
                 }
             }
+        }
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Regression guards for the graded-channel (Hermite bank) river port.
+    //
+    // The old model subtracted depth along a linear tent, max(0, 1 - |field| / (0.06 * width)),
+    // and then derived the water surface from the locally CARVED height, h + river * 6. Two
+    // visible failures followed:
+    //   * a straight-sided V trench up to 12 + 38 * riverDepth = 50 blocks deep, whose width in
+    //     BLOCKS was whatever the drainage field's gradient happened to imply - tens of blocks in
+    //     one place, a couple of hundred where the field flattened out: the "inland fjord";
+    //   * a water surface that read the carved height, and therefore the fine erosion noise, so
+    //     that once it was floored to a block the shoreline stepped through a dozen integer levels
+    //     in a row: the concentric stair-step rings of water, sand and gravel.
+    //
+    // Channels are now a smoothstep cross-section measured in blocks, and the water surface is a
+    // flat plane anchored to the channel's centre line. The tests below pin both down.
+    // ---------------------------------------------------------------------------------------
+
+    /** Ground and water surface either side of a channel centre, at 1-block resolution. */
+    private record Cross(double[] height, double[] water, boolean[] wet) {}
+
+    private static final int CROSS_HALF = 60;
+
+    /** Walks scan lines and returns a cross-section for the middle of each channel it finds. */
+    private static List<Cross> channelCrossSections(long seed, TerrainSettings s, int lines) {
+        List<Cross> found = new ArrayList<>();
+        for (int i = 0; i < lines; i++) {
+            int z = -2400 + i * 470;
+            int perLine = 0;
+            for (int x = -2400; x <= 2400 && perLine < 10; x++) {
+                if (TerrainModel.sample(seed, x, z, s).river() <= 0.5) continue;
+                int start = x;
+                while (x <= 2400 && TerrainModel.sample(seed, x, z, s).river() > 0.5) x++;
+                int centre = (start + x) / 2;
+                double[] h = new double[2 * CROSS_HALF + 1];
+                double[] w = new double[h.length];
+                boolean[] wet = new boolean[h.length];
+                for (int k = 0; k < h.length; k++) {
+                    TerrainModel.Sample sm = TerrainModel.sample(seed, centre - CROSS_HALF + k, z, s);
+                    h[k] = sm.height();
+                    w[k] = sm.waterLevel();
+                    wet[k] = Math.floor(w[k]) > Math.floor(h[k]);
+                }
+                found.add(new Cross(h, w, wet));
+                perLine++;
+            }
+        }
+        return found;
+    }
+
+    /** The indices of the water band around a cross-section's centre, as {@code [from, to]}. */
+    private static int[] waterBand(Cross c) {
+        int a = CROSS_HALF, b = CROSS_HALF;
+        while (a > 0 && c.wet()[a - 1]) a--;
+        while (b < c.height().length - 1 && c.wet()[b + 1]) b++;
+        return new int[]{a, b};
+    }
+
+    /**
+     * A river is a graded valley, not a trench. The bed may be cut below the fall line, but only by
+     * the configured incision (7.5 blocks times the river-depth scale) - never by the fixed
+     * {@code 12 + 38 * riverDepth} the old linear tent subtracted. Measured from the bed up to the
+     * ground immediately beside the water, so it is the channel's own depth and not the local relief.
+     */
+    @Test
+    void riverChannelsAreGradedValleysNotTrenches() {
+        double worst = 0;
+        int checked = 0;
+        for (Cross c : channelCrossSections(8675309L, TerrainSettings.DEFAULT, 6)) {
+            int[] band = waterBand(c);
+            if (band[1] - band[0] < 2) continue;
+            double beside = Math.max(
+                    c.height()[Math.max(0, band[0] - 1)],
+                    c.height()[Math.min(c.height().length - 1, band[1] + 1)]);
+            double bed = Math.min(c.height()[band[0]], c.height()[band[1]]);
+            worst = Math.max(worst, beside - bed);
+            checked++;
+        }
+        assertTrue(checked >= 10, "too few channels found to test: " + checked);
+        assertTrue(worst < 25.0,
+                "a channel was cut like a trench, " + worst + " blocks below the ground beside it");
+    }
+
+    /**
+     * The water's edge has to be a single contour line. A ring needs the surface to rise again on its
+     * way out to the bank, so monotonicity across the water band is exactly the property that rules
+     * the concentric stair-step rings out. The span bound then rules out the sloped funnel a
+     * height-derived surface produced: the old one dropped tens of blocks across its own channel.
+     */
+    @Test
+    void riverSurfaceIsASingleContourNotRings() {
+        int checked = 0, reversals = 0;
+        double spanSum = 0, spanWorst = 0;
+        for (Cross c : channelCrossSections(8675309L, TerrainSettings.DEFAULT, 6)) {
+            int[] band = waterBand(c);
+            if (band[1] - band[0] < 4) continue;
+            checked++;
+            int dir = 0;
+            double lo = Double.MAX_VALUE, hi = -Double.MAX_VALUE;
+            for (int k = band[0]; k <= band[1]; k++) {
+                lo = Math.min(lo, c.water()[k]);
+                hi = Math.max(hi, c.water()[k]);
+                if (k == band[0]) continue;
+                double d = c.water()[k] - c.water()[k - 1];
+                if (Math.abs(d) < 1.0) continue; // a flat plate, floating-point noise, or a gentle drift
+                int sgn = d > 0 ? 1 : -1;
+                if (dir != 0 && sgn != dir) reversals++;
+                dir = sgn;
+            }
+            double span = hi - lo;
+            spanSum += span;
+            spanWorst = Math.max(spanWorst, span);
+        }
+        assertTrue(checked >= 10, "too few channels found to test: " + checked);
+        assertTrue(reversals <= checked / 5,
+                "the water surface rises again inside " + reversals + " of " + checked + " channels");
+        assertTrue(spanSum / checked <= 6.0 && spanWorst <= 25.0,
+                "the water surface is a slope rather than a plane: avg=" + spanSum / checked
+                        + " worst=" + spanWorst);
+    }
+
+    /**
+     * The river-width slider may make rivers wider, but never unbounded: drainage has to stay a sane
+     * fraction of the map at every setting, or a wide-river world becomes one inland fjord. The old
+     * corridor was measured in units of the drainage field, so at high width settings, and wherever
+     * the field flattened out, its width in blocks ran away entirely.
+     */
+    @Test
+    void riverCoverageStaysBoundedAcrossTheWidthSlider() {
+        for (double width : new double[]{0.25, 1.0, 2.5, 4.0}) {
+            TerrainSettings s = TerrainSettings.DEFAULT.withValue(4, width);
+            long channel = 0, total = 0;
+            for (int z = -2048; z <= 2048; z += 32) {
+                for (int x = -2048; x <= 2048; x += 32) {
+                    if (TerrainModel.sample(8675309L, x, z, s).river() > 0.35) channel++;
+                    total++;
+                }
+            }
+            double fraction = channel / (double) total;
+            assertTrue(fraction > 0.001, "riverWidth=" + width + " left no rivers: " + fraction);
+            assertTrue(fraction < 0.40, "riverWidth=" + width + " flooded the map: " + fraction);
         }
     }
 }

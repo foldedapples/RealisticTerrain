@@ -114,7 +114,7 @@ public final class RealisticChunkGenerator extends ChunkGenerator {
                     if(y<=CRUST_TOP) state = y==MIN_Y?Blocks.BEDROCK.getDefaultState():Blocks.DEEPSLATE.getDefaultState();
                     else if(y>surface) state = y<=waterTop?Blocks.WATER.getDefaultState():Blocks.AIR.getDefaultState();
                     else if(TerrainModel.cave(seed,x,y,z,settings) && y<surface-7) state= y<settings.seaLevel()-18?Blocks.WATER.getDefaultState():Blocks.AIR.getDefaultState();
-                    else state=baseState(seed,x,z,surface,y,waterTop,sm,cold,wet);
+                    else state=baseState(seed,x,z,surface,y,sm,cold,wet);
                     chunk.setBlockState(p.set(x,y,z),state,0);
                 }
             }
@@ -123,9 +123,16 @@ public final class RealisticChunkGenerator extends ChunkGenerator {
         }, Util.getMainWorkerExecutor());
     }
 
-    private BlockState baseState(long seed,int x,int z,int surface,int y,int waterTop,TerrainModel.Sample sm,boolean cold,boolean wet){
+    private BlockState baseState(long seed,int x,int z,int surface,int y,TerrainModel.Sample sm,boolean cold,boolean wet){
         int depth=surface-y;
-        boolean submerged = surface <= waterTop + 2;
+        // Beach and channel-bed test. This MUST be read off the continuous submersion depth, never
+        // off `surface - waterTop`: both of those are floored to an integer y, so their difference is
+        // quantised and the width of the beach band in blocks then depended on which way the water
+        // surface had last been floored. That is what painted the concentric stair-step rings of sand
+        // and gravel along every river and shoreline. `waterLevel` and `height` here are still
+        // full-precision doubles straight out of the terrain model - the only floor in the entire
+        // pipeline is the one that places a block - and the jitter keeps the shoreline off a ruler.
+        boolean submerged = sm.waterLevel()-sm.height() > (pseudo(x,z)-0.5)*1.4 - 2.0;
         // Water-bearing beds: beaches, river/lake floors, sandbars.
         if(submerged){
             if(sm.river()>.25 && depth==0) return Blocks.GRAVEL.getDefaultState();
@@ -174,7 +181,10 @@ public final class RealisticChunkGenerator extends ChunkGenerator {
         int terrainTop=Math.max((int)Math.floor(sample.height()),SURFACE_FLOOR)+1;
         int waterTop=(int)Math.floor(sample.waterLevel())+1;
         int top=Math.max(terrainTop,waterTop); BlockState[] states=new BlockState[top-MIN_Y];
-        boolean submerged=terrainTop<=waterTop+2;
+        // Same continuous test as baseState: computing it from the floored terrainTop/waterTop pair
+        // is what made the beach band step, and this column sample is what spawn placement and
+        // feature generation read.
+        boolean submerged=sample.waterLevel()-sample.height() > (pseudo(x,z)-0.5)*1.4 - 2.0;
         for(int y=MIN_Y;y<top;y++){
             BlockState st;
             // Same guaranteed crust as populateNoise: this column sample is what spawn placement
