@@ -65,6 +65,12 @@ Requirements: JDK 21 and an internet connection for the first dependency downloa
 
 The distributable jar is created in `build/libs/`.
 
+`build` also runs `validateModMetadata`, which parses every resource JSON file and
+enforces the parts of the Fabric metadata spec that make the loader reject a mod
+(for example, `authors` / `contributors` must be arrays, and dependency blocks must
+be objects). A malformed `fabric.mod.json` therefore fails the build with a readable
+message instead of failing at game launch.
+
 ## Development test
 
 ```bash

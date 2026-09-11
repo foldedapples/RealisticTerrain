@@ -50,3 +50,133 @@ java {
 test {
     useJUnitPlatform()
 }
+
+// ---------------------------------------------------------------------------
+// Mod metadata validation
+//
+// Fabric rejects the whole mod list when fabric.mod.json is malformed (e.g.
+// `contributors` written as an object instead of an array), and that failure
+// only surfaces at game launch. These checks are wired into `check`, so a
+// plain `gradlew build` fails fast with a readable message instead.
+// ---------------------------------------------------------------------------
+def validateModMetadata = tasks.register('validateModMetadata') {
+    group = 'verification'
+    description = 'Validates fabric.mod.json and the other resource JSON files.'
+
+    def mainResources = file('src/main/resources')
+    def clientResources = file('src/client/resources')
+    inputs.files(mainResources, clientResources).withPropertyName('resources')
+
+    doLast {
+        def slurper = new groovy.json.JsonSlurper()
+        def problems = []
+        def peopleKeys = ['authors', 'contributors']
+        def dependencyKeys = ['depends', 'recommends', 'suggests', 'breaks', 'conflicts']
+
+        // 1. Every resource JSON file must at least be parseable.
+        [mainResources, clientResources].each { dir ->
+            if (!dir.exists()) {
+                return
+            }
+            dir.eachFileRecurse { f ->
+                if (!f.isFile() || !f.name.endsWith('.json')) {
+                    return
+                }
+                try {
+                    slurper.parse(f)
+                } catch (Exception e) {
+                    problems << "${f}: invalid JSON - ${e.message}"
+                }
+            }
+        }
+
+        // 2. fabric.mod.json must satisfy the parts of the Fabric spec that
+        //    break mod loading when violated.
+        def metadata = new File(mainResources, 'fabric.mod.json')
+        if (!metadata.exists()) {
+            problems << 'src/main/resources/fabric.mod.json is missing'
+        } else {
+            def json = null
+            try {
+                json = slurper.parse(metadata)
+            } catch (Exception e) {
+                problems << "fabric.mod.json is not valid JSON - ${e.message}"
+            }
+
+            if (json instanceof Map) {
+                ['schemaVersion', 'id', 'version', 'name'].each { key ->
+                    if (json[key] == null) {
+                        problems << "fabric.mod.json: missing required key '${key}'"
+                    }
+                }
+
+                peopleKeys.each { key ->
+                    if (!json.containsKey(key)) {
+                        return
+                    }
+                    if (!(json[key] instanceof List)) {
+                        problems << "fabric.mod.json: '${key}' must be an array (Fabric rejects objects and bare strings)"
+                        return
+                    }
+                    json[key].eachWithIndex { entry, i ->
+                        if (entry instanceof String) {
+                            return
+                        }
+                        if (entry instanceof Map && entry['name'] != null) {
+                            return
+                        }
+                        problems << "fabric.mod.json: '${key}[${i}]' must be a string or an object with a 'name'"
+                    }
+                }
+
+                dependencyKeys.each { key ->
+                    if (!json.containsKey(key)) {
+                        return
+                    }
+                    if (!(json[key] instanceof Map)) {
+                        problems << "fabric.mod.json: '${key}' must be an object"
+                        return
+                    }
+                    json[key].each { modId, value ->
+                        if (!(value instanceof String) && !(value instanceof List)) {
+                            problems << "fabric.mod.json: '${key}.${modId}' must be a string or an array of strings"
+                        }
+                    }
+                }
+
+                if (json['entrypoints'] != null) {
+                    if (!(json['entrypoints'] instanceof Map)) {
+                        problems << "fabric.mod.json: 'entrypoints' must be an object"
+                    } else {
+                        json['entrypoints'].each { name, value ->
+                            if (!(value instanceof List)) {
+                                problems << "fabric.mod.json: 'entrypoints.${name}' must be an array"
+                            }
+                        }
+                    }
+                }
+
+                (json['mixins'] ?: []).eachWithIndex { mixin, i ->
+                    def configName = (mixin instanceof Map) ? mixin['config'] : mixin
+                    if (configName == null) {
+                        problems << "fabric.mod.json: 'mixins[${i}]' is missing a 'config' entry"
+                        return
+                    }
+                    def found = [new File(mainResources, configName), new File(clientResources, configName)].any { it.exists() }
+                    if (!found) {
+                        problems << "fabric.mod.json: mixin config '${configName}' was not found in src/main/resources or src/client/resources"
+                    }
+                }
+            }
+        }
+
+        if (!problems.isEmpty()) {
+            throw new GradleException('Metadata validation failed:\n  - ' + problems.join('\n  - '))
+        }
+        logger.lifecycle('validateModMetadata: fabric.mod.json and resource JSON files are valid.')
+    }
+}
+
+tasks.named('check') {
+    dependsOn validateModMetadata
+}
