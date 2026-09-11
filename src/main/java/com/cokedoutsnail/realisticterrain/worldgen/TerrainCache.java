@@ -227,4 +227,10 @@ public final class TerrainCache {
     public static long size() {
         return NODES.size();
     }
+
+    /** Test hook: drops every cached node so a case can measure a cold sweep. */
+    public static void clear() {
+        NODES.clear();
+        ACCESS.clear();
+    }
 }

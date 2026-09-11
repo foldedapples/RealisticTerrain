@@ -145,8 +145,14 @@ public final class Drainage {
     }
 
     private static Region region(int rx, int rz, long seed, TerrainSettings s) {
-        long k = mix(seed ^ ((long) s.hashCode() * 0x9E3779B97F4A7C15L)
-                ^ ((long) rx * 0xC2B2AE3D27D4EB4FL) ^ ((long) rz * 0x51F4A7C15D3A9E37L));
+        // Each coordinate is avalanche-mixed on its own BEFORE being combined, exactly as
+        // TerrainCache#key does. Multiplication by an odd constant is GF(2)-linear and XOR is
+        // addition in that space, so a plain `rx*C1 ^ rz*C2` combination has a non-trivial kernel:
+        // two different regions can share a key, and then whichever was solved first silently serves
+        // the other its terrain. Mixing each component first breaks the linearity.
+        long k = mix(seed ^ ((long) s.hashCode() * 0x9E3779B97F4A7C15L));
+        k = mix(k ^ ((long) rx * 0xC2B2AE3D27D4EB4FL));
+        k = mix(k ^ ((long) rz * 0x51F4A7C15D3A9E37L));
         Region r = REGIONS.get(k);
         if (r == null) {
             r = compute(rx, rz, seed, s);

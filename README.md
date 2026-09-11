@@ -11,16 +11,19 @@ The generator is intentionally source-first and experimental. Back up worlds bef
 ## Features
 
 - Selectable **Realistic Terrain** preset in Create World.
-- Dedicated customization screen with five world-type profiles (**Continental, Alpine, Archipelago, Rolling Hills, Canyons**), sixteen sliders in two columns, and a live geological elevation preview with contour lines and a peak/average-height readout.
+- Dedicated customization screen with seven world-type profiles (**Continental, Alpine, Archipelago, Rolling Hills, Canyons, Riverlands, Realistic Earthlike**), twenty-nine settings organised into eight category tabs (**World, Continents, Mountains, Rivers, Erosion, Climate, Surface, Advanced**), a tooltip on every setting, and a live geological elevation preview with contour lines and a peak/average-height readout.
 - **Plate tectonics**: continents are 2D cellular tectonic plates. Collision margins fold into long mountain belts (orogeny) while divergent margins carve rift valleys and deep ocean trenches. The plate field is domain-warped and each plate's trait is blended smoothly across the margin, so plate boundaries meander instead of tracing the cell lattice and no cliff appears where two plates meet.
-- **Hydrological erosion**: twice-domain-warped drainage carves dendritic river basins, and high plateaus are dissected by gully noise into steep, dramatic canyons.
+- **A real drainage network, not a river-shaped noise field**: `worldgen.hydro.Drainage` solves a priority-flood + D8 + flow-accumulation + Strahler-order network once per 512-block region and caches it. Channels are selected by accumulated catchment, so rivers are continuous, flow downhill by construction, merge where tributaries join instead of crossing, and are wider and deeper downstream because width and depth follow discharge and order rather than a slider. Lakes appear only in genuine closed basins (filled to their capped spill elevation), and wetlands only on flat, poorly drained ground. `river_density` changes how many networks exist; `river_density = 0` skips the solver entirely.
+- **Hydraulic erosion**: a deterministic droplet pass deposits soil on valley floors and strips it from canyon walls, and high plateaus are dissected by gully noise into steep, dramatic canyons.
 - **Geological rock strata**: canyon walls expose sedimentary banding, active fault zones get granite/diorite/basalt intrusions, and deep basement rock is deepslate.
 - **Tile caching & smooth interpolation**: slow continental fields are computed once per 16×16 tile, shared by all neighbour chunks, and interpolated in ReTerraForged's nested-lerp form (`lerp(lerp(a00,a10,fx), lerp(a01,a11,fx), fz)`) with a quintic S-curve (`interpQuintic`) applied to the in-cell coordinates. A nested lerp is a convex combination by construction, so the surface passes exactly through its corner values and can never overshoot them - which is what removes the repeating diamond/facet grid and the sawtooth terraces on slopes.
 - **Named continental control points**: the shoreline and abyssal depth are exposed as `coast_line` and `ocean_depth` (modelled on ReTerraForged's `WorldSettings.ControlPoints`), both serialized into the world's generation data and both adjustable from the Customize screen. `coast_line` is the continentalness at which the craton baseline meets sea level, so it is the knob that trades ocean for land; the default leaves land covering roughly 59% of the surface.
 - **Guaranteed world floor**: the model bottoms out on the abyssal plain well above `y = -64`, and generation always lays bedrock at `-64` with deepslate above it (solid to at least `y = -60`), so no column can open a hole into the void.
 - Terrain-aware biomes pick vanilla biomes from the same tectonic height/moisture/temperature model (rift valleys get lush corridors, folded ranges get alpine meadows, rift oceans stay abyssal), with ecotone jitter that softens biome borders.
 - **Slope-aware vegetation**: forests cluster in flat valley floors and canyon bottoms and vanish on steep walls, scree and peaks, scaled by the Vegetation density slider.
-- Rivers enforce a fall line: corridors only carve where they run downhill inside valleys, so channels meander from headwater to coast, taper out of the folded ranges, and never slice through ridgelines - plus basin-only lakes.
+- **Rivers flow downhill by construction**: the flow graph is built from the flood order, so a channel can never climb a ridge. Water is a flat plane across each channel - never a stepped ring of sand and gravel - it never rises above the surrounding fall line, and a bed that dips below sea level is always flooded to sea level.
+- **Structures can genuinely be switched off**: `generate_structures` is enforced where structure starts are created, so a world with structures disabled still has terrain, ores, trees and every other decoration feature.
+- **Soft climatic snow line**: altitude, climate and how exposed the slope is all bias it, with a ragged edge instead of a horizontal cutoff.
 - Biome-coordinate scaling and biome-aware surface temperature/precipitation.
 - **Full-range climate fields**: the temperature and humidity fbm are stretched by `CLIMATE_NORM` so they actually reach the `[-1, 1]` range the biome thresholds are stated on. Before that, a four-octave fbm only reached ~±0.6, which pushed the world towards the temperate middle of the biome table and left desert, jungle, taiga and snowy plains nearly unreachable.
 - **Sand is a place, not a default**: sand/sandstone is applied only to submerged beds, to a jittered coastal band around the `coast_line` contour, and to genuine desert (hot and dry) columns. Every other land surface is grass/dirt/coarse dirt/stone/gravel as before.
@@ -85,6 +88,56 @@ message instead of failing at game launch.
 ```
 
 For an automated local smoke test, set `level-type=realisticterrain:realistic` in `run/server.properties`, accept the Minecraft EULA in `run/eula.txt`, and start the development server.
+
+## Settings
+
+Every generator option is described exactly once, in `TerrainSetting`: its JSON key, UI category, safe
+range, default, whether it is an integer, and its tooltip. The customize screen's sliders and
+tooltips, the codec's validation and the tests all read that one table, so a setting cannot be added
+without being wired up end to end - and no slider can exist that does not affect generation.
+
+The codec is deliberately lenient: it reads the keys it knows and ignores the rest, defaults anything
+missing, still decodes the pre-0.4 nested `control_points` object, and clamps out-of-range values. A
+world saved by an older build therefore loads, and a setting added by a newer build simply defaults
+instead of failing the registry load.
+
+| Category | Settings |
+| --- | --- |
+| World | Maximum terrain height, Sea level, Generate structures |
+| Continents | Continental scale, Coast line, Ocean depth, Plate scale, Tectonic activity |
+| Mountains | Mountain height, Mountain frequency, Ridge sharpness, Roughness, Mountain range width, Mountain uplift |
+| Rivers | River width, River spacing, River depth, River density, Tributary density, Meander strength, Lake frequency, Wetland frequency |
+| Erosion | Erosion intensity, Canyon depth |
+| Climate | Snow line, Biome scale |
+| Surface | Vegetation density, Cave generation |
+| Advanced | Drainage region scale |
+
+## Developer diagnostics
+
+The terrain engine can export deterministic PNG maps so a change can be compared against the previous
+one by eye - grid patterns, ring artefacts, disconnected rivers, needle peaks and region seams are all
+obvious in a map and invisible in an assertion:
+
+```bash
+./gradlew test --tests '*TerrainDiagnostics*' -Drealisticterrain.diagnostics=true
+```
+
+Maps are written to `diagnostics/`, which is git-ignored. `TerrainPerformanceDiagnostic` prints
+cold/warm sweep timings, per-column cost and cache sizes, and enforces no timing threshold - a
+hardware-specific bound would fail the build on a slow machine for no good reason.
+
+## Limitations
+
+- Changing generator settings after chunks already exist produces a border between old and new terrain.
+  Back up worlds before updating.
+- The drainage network is solved per 512-block region. A region cannot know the upstream area that
+  crosses its own border, so its rim is blended into a smooth local channel estimate over three cells.
+  The field is continuous there by construction and the interior uses the real network, but a river
+  crossing a region border can shift sideways slightly where the two representations meet.
+- Lakes are capped at 18 blocks above their own floor, so a very large closed basin ends up as a lake
+  with dry land around it rather than a lake filled to its rim.
+- `drainage_scale` currently scales the channel threshold rather than the region side, so it changes
+  how much water the network carries, not the cache footprint.
 
 ## Voxy compatibility
 

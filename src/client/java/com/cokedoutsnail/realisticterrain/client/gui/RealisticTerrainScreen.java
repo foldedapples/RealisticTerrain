@@ -3,6 +3,7 @@ package com.cokedoutsnail.realisticterrain.client.gui;
 import com.cokedoutsnail.realisticterrain.worldgen.RealisticChunkGenerator;
 import com.cokedoutsnail.realisticterrain.worldgen.ScaledBiomeSource;
 import com.cokedoutsnail.realisticterrain.worldgen.TerrainBiomeSource;
+import com.cokedoutsnail.realisticterrain.worldgen.TerrainSetting;
 import com.cokedoutsnail.realisticterrain.worldgen.TerrainSettings;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
@@ -10,6 +11,7 @@ import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.screen.world.CreateWorldScreen;
 import net.minecraft.client.gui.widget.ButtonWidget;
+import net.minecraft.client.gui.tooltip.Tooltip;
 import net.minecraft.client.world.GeneratorOptionsHolder;
 import net.minecraft.text.Text;
 import net.minecraft.world.dimension.DimensionOptions;
@@ -58,47 +60,71 @@ public final class RealisticTerrainScreen extends Screen {
      * another seventeen-argument constructor call in the GUI.
      */
     private TerrainSettings set(int idx, double v) { return s.withValue(idx, v); }
+
+    /** The category whose sliders are currently shown. */
+    private TerrainSetting.Category category = TerrainSetting.Category.WORLD;
+
     @Override
     protected void init() {
         // World-type profile buttons: one click loads a full named style.
         int by = 24;
-        int bw = Math.max(64, (width - 40 - (TerrainSettings.PROFILES.size() - 1) * 4) / TerrainSettings.PROFILES.size());
+        int bw = Math.max(56, (width - 40 - (TerrainSettings.PROFILES.size() - 1) * 2) / TerrainSettings.PROFILES.size());
         int bx = 20;
         for (TerrainSettings.Profile p : TerrainSettings.PROFILES) {
             addDrawableChild(ButtonWidget.builder(Text.translatable(p.nameKey()), b -> {
                 s = p.settings();
                 clearAndInit();
             }).dimensions(bx, by, bw, 20).build());
-            bx += bw + 4;
+            bx += bw + 2;
         }
-        // Sixteen sliders do not fit in one column at a normal GUI scale, so they are laid out in two
-        // columns of eight. Every row is data-driven: the index is the only thing tying a slider to a
-        // setting. The row pitch shrinks on short windows so the last slider never collides with the
-        // Apply button.
-        int top = by + 28;
-        int gap = Math.max(16, Math.min(24, (height - 56 - top) / 8));
+
+        // Category tabs. Every setting belongs to exactly one category, so with a dozen settings in the
+        // biggest one this is what keeps the screen readable - and it is driven entirely by the
+        // TerrainSetting descriptor table, so a new setting appears under its own tab automatically.
+        int ty = by + 26;
+        int tabsW = 2 * colWidth() + 8;
+        int tw = Math.max(44, tabsW / TerrainSetting.CATEGORIES.size());
+        int tx = 20;
+        for (TerrainSetting.Category c : TerrainSetting.CATEGORIES) {
+            final TerrainSetting.Category cat = c;
+            ButtonWidget tab = ButtonWidget.builder(categoryLabel(cat), b -> {
+                category = cat;
+                clearAndInit();
+            }).dimensions(tx, ty, tw, 20).build();
+            tab.active = cat != category; // the active tab is shown but not clickable
+            addDrawableChild(tab);
+            tx += tw + 1;
+        }
+
+        // Sliders for the selected category, two per row, straight from the descriptor table. Nothing
+        // here knows a setting's name, range or index: they all come from the enum, which is why
+        // adding a setting cannot produce a slider that does not affect generation.
+        int top = ty + 26;
+        int gap = Math.max(18, Math.min(24, (height - 56 - top) / 5));
         int colW = colWidth();
-        slider(0, 20, top, colW, gap, "Mountain height", .25, 3);
-        slider(1, 20, top, colW, gap, "Mountain frequency", .25, 3);
-        slider(2, 20, top, colW, gap, "Ridge sharpness", .25, 3);
-        slider(3, 20, top, colW, gap, "Erosion", 0, 2.5);
-        slider(4, 20, top, colW, gap, "River width", .25, 4);
-        slider(5, 20, top, colW, gap, "River frequency", .25, 3);
-        slider(6, 20, top, colW, gap, "River depth", .25, 3);
-        slider(7, 20, top, colW, gap, "Snow line", 96, 1800);
-        slider(8, 20, top, colW, gap, "Biome scale", .25, 4);
-        slider(9, 20, top, colW, gap, "Sea level", -32, 512);
-        slider(10, 20, top, colW, gap, "Roughness", .2, 3);
-        slider(11, 20, top, colW, gap, "Vegetation", 0, 3);
-        slider(12, 20, top, colW, gap, "Continental scale", .5, 2.5);
-        slider(13, 20, top, colW, gap, "Canyon depth", 0, 2.5);
-        // The two ReTerraForged-style "control points" that let a player fix a world that came out as
-        // endless ocean: Coast line moves the shoreline, Ocean depth deepens the abyssal plain.
-        slider(14, 20, top, colW, gap, "Coast line", -.35, .15);
-        slider(15, 20, top, colW, gap, "Ocean depth", 0, 300);
+        int row = 0;
+        for (TerrainSetting key : TerrainSetting.values()) {
+            if (key.category() != category) continue;
+            addSlider(key, 20 + (row % 2) * (colW + 8), top + (row / 2) * gap, colW);
+            row++;
+        }
 
         initPreviewControls();
         initFooterButtons();
+    }
+
+    private Text categoryLabel(TerrainSetting.Category c) {
+        return Text.translatable("realisticterrain.category." + c.id());
+    }
+
+    /** One descriptor-driven slider, with its tooltip taken from the same table. */
+    private void addSlider(TerrainSetting key, int x, int y, int w) {
+        int index = key.ordinal();
+        DoubleSlider widget = new DoubleSlider(x, y, w, Text.translatable(key.nameKey()),
+                key.min(), key.max(), s.getValue(index), key.integral(),
+                v -> s = set(index, v));
+        widget.setTooltip(Tooltip.of(Text.translatable(key.tooltipKey())));
+        addDrawableChild(widget);
     }
     /** Panel geometry, shared by init() and render() so the buttons and the map always agree. */
     private int colWidth() { return Math.min(210, Math.max(140, (width - 48) / 2)); }
@@ -143,13 +169,6 @@ public final class RealisticTerrainScreen extends Screen {
             spanIndex = (spanIndex + 1) % HeightmapPreview.SPANS.length;
             b.setMessage(zoomLabel());
         }).dimensions(x, y, bw, 20).build());
-    }
-
-    /** Places slider {@code index} in a two-column grid: indices 0-7 in the left column, 8-15 right. */
-    private void slider(int index, int left, int top, int colW, int gap, String label, double min, double max) {
-        int row = index % 8, col = index / 8;
-        addDrawableChild(new DoubleSlider(left + col * (colW + 8), top + row * gap, colW, label, min, max,
-                s.getValue(index), v -> s = set(index, v)));
     }
 
     private Text colourLabel() {

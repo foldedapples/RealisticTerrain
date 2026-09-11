@@ -10,6 +10,7 @@ import net.minecraft.registry.Registry;
 import net.minecraft.registry.RegistryKey;
 import net.minecraft.registry.RegistryKeys;
 import net.minecraft.registry.entry.RegistryEntry;
+import net.minecraft.structure.StructureTemplateManager;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.ChunkPos;
@@ -18,6 +19,7 @@ import net.minecraft.world.ChunkRegion;
 import net.minecraft.world.HeightLimitView;
 import net.minecraft.world.Heightmap;
 import net.minecraft.world.StructureWorldAccess;
+import net.minecraft.world.World;
 import net.minecraft.world.biome.Biome;
 import net.minecraft.world.biome.source.BiomeSource;
 import net.minecraft.world.biome.source.BiomeAccess;
@@ -26,6 +28,7 @@ import net.minecraft.world.gen.StructureAccessor;
 import net.minecraft.world.gen.chunk.Blender;
 import net.minecraft.world.gen.chunk.ChunkGenerator;
 import net.minecraft.world.gen.chunk.VerticalBlockSample;
+import net.minecraft.world.gen.chunk.placement.StructurePlacementCalculator;
 import net.minecraft.world.gen.feature.ConfiguredFeature;
 import net.minecraft.world.gen.feature.PlacedFeature;
 import net.minecraft.world.gen.noise.NoiseConfig;
@@ -149,7 +152,13 @@ public final class RealisticChunkGenerator extends ChunkGenerator {
             return Blocks.STONE.getDefaultState();
         }
         // Snowline.
-        double snowFade=(surface-settings.snowLine())/115.0 + (cold?.55:0);
+        // Snowline: a soft climatic blend rather than a horizontal cutoff. Altitude carries most of
+        // it, climate carries the rest (cold biomes snow lower), steep exposed faces hold less snow
+        // than sheltered ones, and the per-column hash makes the edge ragged.
+        double shelter = 1.0 - clamp01(sm.slopeHint() * 1.4);
+        double humid = clamp01(sm.moisture() * 0.5 + 0.5);
+        double snowFade = (surface - settings.snowLine()) / 115.0 + (cold ? .55 : 0)
+                + 0.20 * shelter + 0.30 * (humid - 0.5);
         if(depth==0 && snowFade>0 && pseudo(x,z)<Math.min(1,snowFade)) return Blocks.SNOW_BLOCK.getDefaultState();
         // Exposed bedrock on steep, high, ridged slopes (scree, peaks).
         if(sm.ridge()>.72 && sm.slopeHint()>.42) return Blocks.STONE.getDefaultState();
@@ -240,6 +249,24 @@ public final class RealisticChunkGenerator extends ChunkGenerator {
         return new VerticalBlockSample(MIN_Y,states);
     }
     @Override public void buildSurface(ChunkRegion region,StructureAccessor structures,NoiseConfig noiseConfig,Chunk chunk) { }
+
+    /**
+     * Structure placement gate.
+     *
+     * <p>Structures are not placed by {@code generateFeatures} - that only runs decoration features -
+     * they are placed here, when the chunk's structure starts are created. Overriding this is therefore
+     * a genuine suppression: with the setting off, no start is ever created, so no structure, no
+     * structure piece and no structure-specific mob spawn can appear, while terrain, ores, trees and
+     * every other decoration feature are untouched. Vanilla's own global "Generate Structures" option
+     * is a world-creation toggle outside the generator, so it cannot be read from here; this is the
+     * generator-side gate the setting actually drives.
+     */
+    @Override public void setStructureStarts(DynamicRegistryManager registryManager,
+            StructurePlacementCalculator placementCalculator, StructureAccessor structureAccessor,
+            Chunk chunk, StructureTemplateManager templateManager, RegistryKey<World> dimension){
+        if(!settings.generateStructures()) return;
+        super.setStructureStarts(registryManager, placementCalculator, structureAccessor, chunk, templateManager, dimension);
+    }
     @Override public void carve(ChunkRegion region,long seed,NoiseConfig noiseConfig,BiomeAccess biomeAccess,StructureAccessor structures,Chunk chunk) { }
     @Override public void populateEntities(ChunkRegion region) {
         ChunkPos chunkPos = region.getCenterPos();

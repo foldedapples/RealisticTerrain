@@ -353,10 +353,16 @@ public final class TerrainModel {
     }
 
     public static boolean cave(long seed, int x, int y, int z, TerrainSettings s) {
-        if (y > 1500 || y < -48) return false;
+        // Zero density disables cave carving outright, which also removes the flooded cave pockets the
+        // generator places below sea level - so a cave-free world really has no cave water either.
+        if (s.caveGeneration() <= 0.01f) return false;
+        if (y > maxSurface(s) || y < -48) return false;
         double n1 = Noise2D.value((x + y * .42) / 72.0, (z - y * .31) / 72.0, seed + 701);
         double n2 = Noise2D.value((x - y * .23) / 38.0, (z + y * .37) / 38.0, seed + 709);
-        double threshold = .78 - Math.min(.12, s.roughness() * .035);
+        // Higher density lowers the threshold; the roughness term perturbs it so caves do not all open
+        // at exactly the same level across the world.
+        double threshold = .78 - Math.min(.12, s.roughness() * .035)
+                - Math.min(.18, (s.caveGeneration() - 1.0f) * .09f);
         return Math.abs(n1 * .68 + n2 * .32) > threshold;
     }
 
