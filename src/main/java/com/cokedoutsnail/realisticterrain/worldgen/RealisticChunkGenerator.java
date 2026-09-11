@@ -41,6 +41,19 @@ import java.util.concurrent.atomic.AtomicLong;
 
 public final class RealisticChunkGenerator extends ChunkGenerator {
     public static final int MIN_Y=-64, MAX_Y=2031, WORLD_HEIGHT=2096;
+    /**
+     * Highest y that is <em>always</em> solid crust, whatever the modelled surface says. The
+     * generator lays bedrock at {@link #MIN_Y} and deepslate directly above it, so every column
+     * owns a floor from {@code y = -64} up to at least {@code y = -60}. Neither air nor water can
+     * therefore open onto the void at the bottom of the world.
+     */
+    private static final int CRUST_TOP = MIN_Y + 4;
+    /**
+     * Deepest ground surface the generator will write. The terrain model already bottoms out at
+     * {@link TerrainModel#MIN_SURFACE} (-52); this is a hard safety net that keeps the generated
+     * surface inside the world even if the model is retuned later.
+     */
+    private static final int SURFACE_FLOOR = MIN_Y + 5;
     public static final MapCodec<RealisticChunkGenerator> CODEC = RecordCodecBuilder.mapCodec(i -> i.group(
             BiomeSource.CODEC.fieldOf("biome_source").forGetter(RealisticChunkGenerator::getBiomeSource),
             TerrainSettings.CODEC.fieldOf("settings").forGetter(RealisticChunkGenerator::settings)
@@ -87,15 +100,19 @@ public final class RealisticChunkGenerator extends ChunkGenerator {
             for(int lx=0;lx<16;lx++) for(int lz=0;lz<16;lz++){
                 int x=cp.getStartX()+lx,z=cp.getStartZ()+lz;
                 TerrainModel.Sample sm=TerrainModel.sample(seed,x,z,settings);
-                int surface=(int)Math.floor(sm.height());
+                int surface=Math.max((int)Math.floor(sm.height()),SURFACE_FLOOR);
                 int waterTop=(int)Math.floor(sm.waterLevel());
                 RegistryEntry<Biome> biome = biomeSource.getBiome(x >> 2, surface >> 2, z >> 2, noiseConfig.getMultiNoiseSampler());
                 boolean cold=biome.value().getTemperature() < 0.15F || sm.temperature() < -.2;
                 boolean wet=biome.value().hasPrecipitation() || sm.moisture()>.15;
-                for(int y=MIN_Y;y<=Math.max(surface,waterTop);y++){
+                int top=Math.max(surface,waterTop);
+                for(int y=MIN_Y;y<=top;y++){
                     BlockState state;
-                    if(y>surface) state = y<=waterTop?Blocks.WATER.getDefaultState():Blocks.AIR.getDefaultState();
-                    else if(y==MIN_Y) state=Blocks.BEDROCK.getDefaultState();
+                    // Guaranteed crust first: bedrock at the very bottom, deepslate above it. This
+                    // is branched before the water/air case so a submerged column can never have
+                    // its floor overwritten by water and open a hole down into the void.
+                    if(y<=CRUST_TOP) state = y==MIN_Y?Blocks.BEDROCK.getDefaultState():Blocks.DEEPSLATE.getDefaultState();
+                    else if(y>surface) state = y<=waterTop?Blocks.WATER.getDefaultState():Blocks.AIR.getDefaultState();
                     else if(TerrainModel.cave(seed,x,y,z,settings) && y<surface-7) state= y<settings.seaLevel()-18?Blocks.WATER.getDefaultState():Blocks.AIR.getDefaultState();
                     else state=baseState(seed,x,z,surface,y,waterTop,sm,cold,wet);
                     chunk.setBlockState(p.set(x,y,z),state,0);
@@ -149,19 +166,21 @@ public final class RealisticChunkGenerator extends ChunkGenerator {
         if(type==Heightmap.Type.WORLD_SURFACE || type==Heightmap.Type.WORLD_SURFACE_WG) {
             height=Math.max(height,sample.waterLevel());
         }
-        return (int)Math.floor(height)+1;
+        return Math.max((int)Math.floor(height),SURFACE_FLOOR)+1;
     }
     @Override public VerticalBlockSample getColumnSample(int x,int z,HeightLimitView world,NoiseConfig noiseConfig){
         long seed=terrainSeed(noiseConfig);
         TerrainModel.Sample sample=TerrainModel.sample(seed,x,z,settings);
-        int terrainTop=(int)Math.floor(sample.height())+1;
+        int terrainTop=Math.max((int)Math.floor(sample.height()),SURFACE_FLOOR)+1;
         int waterTop=(int)Math.floor(sample.waterLevel())+1;
         int top=Math.max(terrainTop,waterTop); BlockState[] states=new BlockState[top-MIN_Y];
         boolean submerged=terrainTop<=waterTop+2;
         for(int y=MIN_Y;y<top;y++){
             BlockState st;
-            if(y>=terrainTop) st=y<waterTop?Blocks.WATER.getDefaultState():Blocks.AIR.getDefaultState();
-            else if(y==MIN_Y) st=Blocks.BEDROCK.getDefaultState();
+            // Same guaranteed crust as populateNoise: this column sample is what spawn placement
+            // and feature generation read, so it must never report a missing floor either.
+            if(y<=CRUST_TOP) st=y==MIN_Y?Blocks.BEDROCK.getDefaultState():Blocks.DEEPSLATE.getDefaultState();
+            else if(y>=terrainTop) st=y<waterTop?Blocks.WATER.getDefaultState():Blocks.AIR.getDefaultState();
             else if(y<settings.seaLevel()-160) st=Blocks.DEEPSLATE.getDefaultState();
             else if(submerged && y==terrainTop-1) st=Blocks.SAND.getDefaultState();
             else if(submerged && y>=terrainTop-3) st=Blocks.SANDSTONE.getDefaultState();

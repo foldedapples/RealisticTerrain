@@ -20,22 +20,13 @@ public final class RealisticTerrainScreen extends Screen {
         this.s = holder.selectedDimensions().getChunkGenerator() instanceof RealisticChunkGenerator generator
                 ? generator.settings() : TerrainSettings.DEFAULT;
     }
-    private TerrainSettings set(int idx,double v){ float f=(float)v; return switch(idx){
-        case 0->new TerrainSettings(f,s.mountainFrequency(),s.ridgeSharpness(),s.erosionIntensity(),s.riverWidth(),s.riverFrequency(),s.riverDepth(),s.snowLine(),s.biomeScale(),s.seaLevel(),s.roughness(),s.vegetationDensity(),s.continentalScale(),s.canyonDepth(),s.seedSalt());
-        case 1->new TerrainSettings(s.mountainHeight(),f,s.ridgeSharpness(),s.erosionIntensity(),s.riverWidth(),s.riverFrequency(),s.riverDepth(),s.snowLine(),s.biomeScale(),s.seaLevel(),s.roughness(),s.vegetationDensity(),s.continentalScale(),s.canyonDepth(),s.seedSalt());
-        case 2->new TerrainSettings(s.mountainHeight(),s.mountainFrequency(),f,s.erosionIntensity(),s.riverWidth(),s.riverFrequency(),s.riverDepth(),s.snowLine(),s.biomeScale(),s.seaLevel(),s.roughness(),s.vegetationDensity(),s.continentalScale(),s.canyonDepth(),s.seedSalt());
-        case 3->new TerrainSettings(s.mountainHeight(),s.mountainFrequency(),s.ridgeSharpness(),f,s.riverWidth(),s.riverFrequency(),s.riverDepth(),s.snowLine(),s.biomeScale(),s.seaLevel(),s.roughness(),s.vegetationDensity(),s.continentalScale(),s.canyonDepth(),s.seedSalt());
-        case 4->new TerrainSettings(s.mountainHeight(),s.mountainFrequency(),s.ridgeSharpness(),s.erosionIntensity(),f,s.riverFrequency(),s.riverDepth(),s.snowLine(),s.biomeScale(),s.seaLevel(),s.roughness(),s.vegetationDensity(),s.continentalScale(),s.canyonDepth(),s.seedSalt());
-        case 5->new TerrainSettings(s.mountainHeight(),s.mountainFrequency(),s.ridgeSharpness(),s.erosionIntensity(),s.riverWidth(),f,s.riverDepth(),s.snowLine(),s.biomeScale(),s.seaLevel(),s.roughness(),s.vegetationDensity(),s.continentalScale(),s.canyonDepth(),s.seedSalt());
-        case 6->new TerrainSettings(s.mountainHeight(),s.mountainFrequency(),s.ridgeSharpness(),s.erosionIntensity(),s.riverWidth(),s.riverFrequency(),f,s.snowLine(),s.biomeScale(),s.seaLevel(),s.roughness(),s.vegetationDensity(),s.continentalScale(),s.canyonDepth(),s.seedSalt());
-        case 7->new TerrainSettings(s.mountainHeight(),s.mountainFrequency(),s.ridgeSharpness(),s.erosionIntensity(),s.riverWidth(),s.riverFrequency(),s.riverDepth(),(int)v,s.biomeScale(),s.seaLevel(),s.roughness(),s.vegetationDensity(),s.continentalScale(),s.canyonDepth(),s.seedSalt());
-        case 8->new TerrainSettings(s.mountainHeight(),s.mountainFrequency(),s.ridgeSharpness(),s.erosionIntensity(),s.riverWidth(),s.riverFrequency(),s.riverDepth(),s.snowLine(),f,s.seaLevel(),s.roughness(),s.vegetationDensity(),s.continentalScale(),s.canyonDepth(),s.seedSalt());
-        case 9->new TerrainSettings(s.mountainHeight(),s.mountainFrequency(),s.ridgeSharpness(),s.erosionIntensity(),s.riverWidth(),s.riverFrequency(),s.riverDepth(),s.snowLine(),s.biomeScale(),(int)v,s.roughness(),s.vegetationDensity(),s.continentalScale(),s.canyonDepth(),s.seedSalt());
-        case 10->new TerrainSettings(s.mountainHeight(),s.mountainFrequency(),s.ridgeSharpness(),s.erosionIntensity(),s.riverWidth(),s.riverFrequency(),s.riverDepth(),s.snowLine(),s.biomeScale(),s.seaLevel(),f,s.vegetationDensity(),s.continentalScale(),s.canyonDepth(),s.seedSalt());
-        case 11->new TerrainSettings(s.mountainHeight(),s.mountainFrequency(),s.ridgeSharpness(),s.erosionIntensity(),s.riverWidth(),s.riverFrequency(),s.riverDepth(),s.snowLine(),s.biomeScale(),s.seaLevel(),s.roughness(),f,s.continentalScale(),s.canyonDepth(),s.seedSalt());
-        case 12->new TerrainSettings(s.mountainHeight(),s.mountainFrequency(),s.ridgeSharpness(),s.erosionIntensity(),s.riverWidth(),s.riverFrequency(),s.riverDepth(),s.snowLine(),s.biomeScale(),s.seaLevel(),s.roughness(),s.vegetationDensity(),f,s.canyonDepth(),s.seedSalt());
-        default->new TerrainSettings(s.mountainHeight(),s.mountainFrequency(),s.ridgeSharpness(),s.erosionIntensity(),s.riverWidth(),s.riverFrequency(),s.riverDepth(),s.snowLine(),s.biomeScale(),s.seaLevel(),s.roughness(),s.vegetationDensity(),s.continentalScale(),f,s.seedSalt());}; }
-    @Override protected void init(){ int x=20,w=220,g=22;
+    /**
+     * Every slider routes through here. The index to setting mapping lives in
+     * {@link TerrainSettings#withValue(int, double)}, so adding a setting never means writing
+     * another seventeen-argument constructor call in the GUI.
+     */
+    private TerrainSettings set(int idx,double v){ return s.withValue(idx,v); }
+    @Override protected void init(){
         // World-type profile buttons: one click loads a full named style.
         int by=26;
         int bw=Math.max(64,(width-40-(TerrainSettings.PROFILES.size()-1)*4)/TerrainSettings.PROFILES.size());
@@ -44,21 +35,29 @@ public final class RealisticTerrainScreen extends Screen {
             addDrawableChild(ButtonWidget.builder(Text.translatable(p.nameKey()),b->{s=p.settings(); clearAndInit();}).dimensions(bx,by,bw,20).build());
             bx+=bw+4;
         }
-        int sy=by+28;
-        addDrawableChild(new DoubleSlider(x,sy+g*0,w,"Mountain height",.25,3,s.mountainHeight(),v->s=set(0,v)));
-        addDrawableChild(new DoubleSlider(x,sy+g*1,w,"Mountain frequency",.25,3,s.mountainFrequency(),v->s=set(1,v)));
-        addDrawableChild(new DoubleSlider(x,sy+g*2,w,"Ridge sharpness",.25,3,s.ridgeSharpness(),v->s=set(2,v)));
-        addDrawableChild(new DoubleSlider(x,sy+g*3,w,"Erosion",0,2.5,s.erosionIntensity(),v->s=set(3,v)));
-        addDrawableChild(new DoubleSlider(x,sy+g*4,w,"River width",.25,4,s.riverWidth(),v->s=set(4,v)));
-        addDrawableChild(new DoubleSlider(x,sy+g*5,w,"River frequency",.25,3,s.riverFrequency(),v->s=set(5,v)));
-        addDrawableChild(new DoubleSlider(x,sy+g*6,w,"River depth",.25,3,s.riverDepth(),v->s=set(6,v)));
-        addDrawableChild(new DoubleSlider(x,sy+g*7,w,"Snow line",96,1800,s.snowLine(),v->s=set(7,v)));
-        addDrawableChild(new DoubleSlider(x,sy+g*8,w,"Biome scale",.25,4,s.biomeScale(),v->s=set(8,v)));
-        addDrawableChild(new DoubleSlider(x,sy+g*9,w,"Sea level",-32,512,s.seaLevel(),v->s=set(9,v)));
-        addDrawableChild(new DoubleSlider(x,sy+g*10,w,"Roughness",.2,3,s.roughness(),v->s=set(10,v)));
-        addDrawableChild(new DoubleSlider(x,sy+g*11,w,"Vegetation",0,3,s.vegetationDensity(),v->s=set(11,v)));
-        addDrawableChild(new DoubleSlider(x,sy+g*12,w,"Continental scale",.5,2.5,s.continentalScale(),v->s=set(12,v)));
-        addDrawableChild(new DoubleSlider(x,sy+g*13,w,"Canyon depth",0,2.5,s.canyonDepth(),v->s=set(13,v)));
+        // Sixteen sliders no longer fit in one column at a normal GUI scale, so they are laid out in
+        // two columns of eight, sized to the window. Every row is data-driven: the index is the only
+        // thing tying a slider to a setting (see TerrainSettings.withValue).
+        int top=by+30, gap=24;
+        int colW=Math.min(210,Math.max(140,(width-48)/2));
+        slider(0, 20, top, colW, gap, "Mountain height",    .25, 3);
+        slider(1, 20, top, colW, gap, "Mountain frequency", .25, 3);
+        slider(2, 20, top, colW, gap, "Ridge sharpness",    .25, 3);
+        slider(3, 20, top, colW, gap, "Erosion",            0,   2.5);
+        slider(4, 20, top, colW, gap, "River width",        .25, 4);
+        slider(5, 20, top, colW, gap, "River frequency",    .25, 3);
+        slider(6, 20, top, colW, gap, "River depth",        .25, 3);
+        slider(7, 20, top, colW, gap, "Snow line",          96,  1800);
+        slider(8, 20, top, colW, gap, "Biome scale",        .25, 4);
+        slider(9, 20, top, colW, gap, "Sea level",          -32, 512);
+        slider(10, 20, top, colW, gap, "Roughness",         .2,  3);
+        slider(11, 20, top, colW, gap, "Vegetation",        0,   3);
+        slider(12, 20, top, colW, gap, "Continental scale", .5,  2.5);
+        slider(13, 20, top, colW, gap, "Canyon depth",      0,   2.5);
+        // The two ReTerraForged-style "control points" that let a player fix a world that came out
+        // as endless ocean: Coast line moves the shoreline, Ocean depth deepens the abyssal plain.
+        slider(14, 20, top, colW, gap, "Coast line",        -.35, .15);
+        slider(15, 20, top, colW, gap, "Ocean depth",       0,   300);
         addDrawableChild(ButtonWidget.builder(Text.translatable("realisticterrain.customize.reset"),b->{s=TerrainSettings.DEFAULT; clearAndInit();}).dimensions(20,height-28,100,20).build());
         addDrawableChild(ButtonWidget.builder(Text.translatable("realisticterrain.customize.done"),b->{
             TerrainSettings applied = s;
@@ -77,6 +76,22 @@ public final class RealisticTerrainScreen extends Screen {
             client.setScreen(parent);
         }).dimensions(width-120,height-28,100,20).build());
     }
-    @Override public void render(DrawContext ctx,int mouseX,int mouseY,float delta){ super.render(ctx,mouseX,mouseY,delta); ctx.drawCenteredTextWithShadow(textRenderer,title,width/2,14,0xFFFFFF); int px=270,py=42,pw=Math.max(160,width-px-20),ph=Math.max(180,height-90); TerrainPreview.render(ctx,textRenderer,px,py,pw,ph,previewSeed,s); ctx.drawTextWithShadow(textRenderer,Text.translatable("realisticterrain.customize.preview"),px,py-14,0xFFFFFF); }
+    /** Places slider {@code index} in a two-column grid: indices 0-7 in the left column, 8-15 right. */
+    private void slider(int index,int left,int top,int colW,int gap,String label,double min,double max){
+        int row=index%8, col=index/8;
+        addDrawableChild(new DoubleSlider(left+col*(colW+8),top+row*gap,colW,label,min,max,
+                s.getValue(index),v->s=set(index,v)));
+    }
+    @Override public void render(DrawContext ctx,int mouseX,int mouseY,float delta){
+        super.render(ctx,mouseX,mouseY,delta);
+        ctx.drawCenteredTextWithShadow(textRenderer,title,width/2,14,0xFFFFFF);
+        // The slider columns already own the left half of the window, so the preview only gets
+        // drawn when there is genuinely room for it instead of being squashed to nothing.
+        int colW=Math.min(210,Math.max(140,(width-48)/2));
+        int px=20+2*(colW+8)+16, py=42, pw=width-px-20, ph=height-90;
+        if(pw<140) return;
+        TerrainPreview.render(ctx,textRenderer,px,py,pw,ph,previewSeed,s);
+        ctx.drawTextWithShadow(textRenderer,Text.translatable("realisticterrain.customize.preview"),px,py-14,0xFFFFFF);
+    }
     @Override public void close(){ client.setScreen(parent); }
 }

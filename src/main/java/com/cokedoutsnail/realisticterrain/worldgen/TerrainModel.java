@@ -37,6 +37,28 @@ public final class TerrainModel {
 
     private static final double RIVER_PROBE = 28.0;
 
+    /** Upper bound on the modelled surface height. */
+    public static final double MAX_SURFACE = 1900.0;
+    /**
+     * Lower bound on the modelled surface height. The world floor is {@code y = -64}
+     * (see {@link RealisticChunkGenerator#MIN_Y}), so the abyssal plain deliberately bottoms
+     * out well above it. Previously the model was allowed down to -120, which is 56 blocks
+     * <em>below</em> the world: those columns had no ground at all and their ocean sat open on
+     * the void (the "holes dropping into the void" bug). Keeping the floor in-world guarantees
+     * a solid crust beneath every column.
+     */
+    public static final double MIN_SURFACE = -52.0;
+
+    /** Craton relief per unit of continentalness, in blocks. */
+    private static final double CRATON_RELIEF = 115.0;
+    /**
+     * Continentalness span over which the abyssal plain reaches its full depth. Together with
+     * {@link TerrainSettings#coastLine()} this sets how quickly the shelf falls away into the deep
+     * ocean; it is kept fixed so the depth slider changes how deep the sea is, not how abrupt the
+     * continental margin looks.
+     */
+    private static final double SHELF_SPAN = 0.55;
+
     private static double clamp(double v) {
         return Math.max(0.0, Math.min(1.0, v));
     }
@@ -52,9 +74,16 @@ public final class TerrainModel {
      */
     private static double tectonicBase(double x, double z, TerrainSettings s, TerrainCache.Node c) {
         double continent = c.continent();
-        // Craton base: ocean basins drop with continentalScale, shields rise.
-        double craton = s.seaLevel() + continent * 110.0 * s.continentalScale();
-        double oceanBasin = -clamp((-continent - 0.15) / 0.6) * 120.0; // deepen ocean interiors to abyssal depths
+        // Craton base. The shoreline is placed at the configured coast line: land is
+        // continent > coastLine, so this single number is the switch a player uses to trade ocean
+        // for land. Lowering it pushes the shoreline seaward (more land); raising it moves the
+        // shoreline inland and drowns the coasts. This is ReTerraForged's "coast" control point.
+        double coast = s.coastLine();
+        double craton = s.seaLevel() + (continent - coast) * CRATON_RELIEF * s.continentalScale();
+        // Ocean basins deepen away from the shelf and bottom out on the abyssal plain rather than
+        // punching through the world floor (MIN_SURFACE keeps them in-world). ReTerraForged's
+        // "deepOcean" control point.
+        double oceanBasin = -clamp((coast - continent) / SHELF_SPAN) * s.oceanDepth();
         // Orogeny: folded chains only where plates collide (convergent margins).
         double collision = c.convergent();
         double orogeny = Math.pow(c.belt(), 0.5 + 0.85 * s.ridgeSharpness());
@@ -67,7 +96,7 @@ public final class TerrainModel {
         double foothills = clamp((c.macro() - 0.02) / 0.60) * (1.0 - collisionMask);
         double h = craton + oceanBasin + c.macro() * 40.0 + foothills * 95.0 * s.mountainHeight()
                 + range - trench - continentalRift;
-        return clamp(h, -120.0, 1900.0);
+        return clamp(h, MIN_SURFACE, MAX_SURFACE);
     }
 
     private static double baseHeight(double x, double z, long seed, TerrainSettings s) {
@@ -140,7 +169,7 @@ public final class TerrainModel {
         double lake = clamp((lakeNoise - 0.40) / 0.18);
         lake = lake * lake * basin * (1.0 - c.convergent()) * (1.0 - clamp(river * 3.0));
         h -= lake * (10.0 + 20.0 * s.riverDepth());
-        h = clamp(h, -120.0, 1900.0);
+        h = clamp(h, MIN_SURFACE, MAX_SURFACE);
 
         // The water surface is derived from the carved bed so it can never float above the ground.
         double inlandWater = s.seaLevel();
