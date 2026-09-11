@@ -1,6 +1,7 @@
 package com.cokedoutsnail.realisticterrain.worldgen;
 
 import com.cokedoutsnail.realisticterrain.noise.Noise2D;
+import com.cokedoutsnail.realisticterrain.worldgen.hydro.Drainage;
 
 /**
  * Shared mathematical terrain model used by both chunk generation and the live preview.
@@ -193,15 +194,27 @@ public final class TerrainModel {
         double foothills = clamp((c.macro() - 0.02) / 0.60) * (1.0 - collisionMask);
         double h = craton + oceanBasin + c.macro() * 40.0 + foothills * 95.0 * s.mountainHeight()
                 + range - trench - continentalRift;
-        return clamp(h, MIN_SURFACE, MAX_SURFACE);
+        return clamp(h, MIN_SURFACE, maxSurface(s));
+    }
+
+    /**
+     * Highest surface the model may produce: the {@code maximum_terrain_y} setting, kept inside the
+     * hard {@link #MAX_SURFACE} cap. Terrain is clamped here rather than at the chunk writer so every
+     * consumer of {@link #sample} - carving, water, heightmaps, biomes - sees the same ceiling, and
+     * because the cap is well below the dimension's build height there is always room left for snow,
+     * trees and structures on top of the tallest peak.
+     */
+    public static double maxSurface(TerrainSettings s) {
+        return clamp(s.maximumTerrainY(), 64.0, MAX_SURFACE);
     }
 
     /**
      * The smooth tectonic fall line at a column - {@code tectonicBase} with the cached coarse fields
-     * resolved. Package-private rather than private so the terrain tests can compare the surface the
-     * channels are cut into against the surface that comes out of them.
+     * resolved. Public because the drainage solver fills its regional grid from it: the flow network
+     * must be computed on the same surface the channels are later cut into, and that surface must
+     * exclude the channels themselves or the solver would chase its own incisions.
      */
-    static double baseHeight(double x, double z, long seed, TerrainSettings s) {
+    public static double baseHeight(double x, double z, long seed, TerrainSettings s) {
         return tectonicBase(x, z, s, TerrainCache.sample(x, z, seed, s));
     }
 
@@ -230,16 +243,24 @@ public final class TerrainModel {
         double ridgeDetail = clamp((Noise2D.fbm(x / 200.0, z / 200.0, seed + 223, 3, 2.15, .5) + 1.0) * 0.5);
         double ridge = Math.min(1.0, Math.pow(c.belt(), 0.5 + 0.6 * s.ridgeSharpness()) * (0.6 + 0.4 * ridgeDetail));
 
-        // --- drainage: twice-domain-warped signed field yields dendritic river basins ---
-        double wx = x + c.warpX() * 420.0;
-        double wz = z + c.warpZ() * 420.0;
-        double wx2 = wx + Noise2D.fbm(wx / 170.0, wz / 170.0, seed + 193, 2, 2.3, .5) * 150.0;
-        double wz2 = wz + Noise2D.fbm(wx / 170.0, wz / 170.0, seed + 197, 2, 2.3, .5) * 150.0;
-        double drainage = Noise2D.fbm(wx2 / (760.0 / s.riverFrequency()), wz2 / (760.0 / s.riverFrequency()), seed + 151, 3, 2.0, .52);
-        double lakeNoise = Noise2D.fbm(wx2 / 920.0, wz2 / 920.0, seed + 167, 4, 2.07, .5);
+        // --- drainage network: real flow accumulation, order, basins and wetlands ---
+        // The channel mask is no longer noise. Drainage solves a priority-flood + D8 flow network per
+        // region and hands back discharge, Strahler order and closed-basin depth here. Meander warps
+        // WHERE the network is sampled, never the height the water sits at, so a meander can move a
+        // channel sideways but can never make it run uphill.
+        double meander = s.meanderStrength();
+        double mx = x, mz = z;
+        if (meander > 0.01) {
+            double amp = 55.0 * meander * s.riverWidth();
+            mx = x + Noise2D.fbm(x / 640.0, z / 640.0, seed + 733, 2, 2.3, .5) * amp;
+            mz = z + Noise2D.fbm(x / 640.0, z / 640.0, seed + 739, 2, 2.3, .5) * amp;
+        }
+        Drainage.Cell d = Drainage.sample(mx, mz, seed, s);
+        double discharge = d.discharge();
+        double order = d.order();
 
         // --- fluvial canyon dissection of high plateaus ---
-        double dissection = Math.max(0.0, Noise2D.ridged(wx2 / 260.0, wz2 / 260.0, seed + 87, 3));
+        double dissection = Math.max(0.0, Noise2D.ridged(x / 260.0, z / 260.0, seed + 87, 3));
         double canyonHost = clamp((hSmooth - (s.seaLevel() + 20.0)) / 230.0) * (1.0 - c.convergent() * 0.6);
         double canyon = Math.pow(dissection, 1.8) * canyonHost * (8.0 + 42.0 * s.canyonDepth());
 
@@ -251,117 +272,63 @@ public final class TerrainModel {
         // contributes nothing at all.
         double h0 = hSmooth - Math.abs(erosion) * ridge * 42.0 * s.erosionIntensity() - canyon
                   + hydro.delta() * s.erosionIntensity();
+        // Wetland is soft, saturated ground: it settles very slightly and holds moisture, but it can
+        // never LIFT the surface, so it cannot produce water above its own banks.
+        h0 -= d.wetland() * 1.4 * s.wetlandFrequency();
 
-        // --- river corridor: a graded (Hermite) channel, ReTerraForged style ---
-        // The previous model subtracted depth along a LINEAR tent, max(0, 1 - |field| / (0.06 * w)),
-        // and two things were wrong with it.
+        // Width, depth and water level all come from the drainage network instead of from a noise
+        // field. Two different quantities are needed, and keeping them apart is what makes the
+        // channel behave:
         //
-        //   1. A tent is a straight-sided V with a hard crease along its centre line, and its width
-        //      in *blocks* was whatever the drainage field's gradient happened to imply: tens of
-        //      blocks in one place, a couple of hundred wherever the field flattened out. That is
-        //      the "massive, harsh trench", and the occasional inland fjord.
-        //   2. The water surface was derived from the locally CARVED height, h + river * 6. Such a
-        //      surface is not monotone across the channel, so once it had been floored to an integer
-        //      y it stepped up and down several times on the way out to the bank. Those steps are
-        //      the concentric stair-step rings of water, sand and gravel.
+        //   * channelProfile is the cross-section shape - 0 at the rim, 1 on the centre line - and it
+        //     grades the INCISION.
+        //   * channelPresence saturates to 1 across the whole water-bearing part of the section, and
+        //     it anchors the WATER LEVEL, which is therefore a flat plane rather than a copy of the
+        //     bed. Deriving the surface from the carved ground instead would make every column with
+        //     any incision at all "wet", so the river would spread across its own banks.
         //
-        // So: the corridor is measured in BLOCKS - |field| / |grad field| is the standard first-order
-        // estimate of the distance to the field's zero set - and clamped to a configured reach; the
-        // cross-section is a smoothstep S-curve that is flat-sloped at the bed AND at the rim; and
-        // the water surface is taken from the BED rather than from the carved height.
-        double bedWidth = clamp(RIVER_BED_WIDTH * s.riverWidth(), RIVER_BED_WIDTH_MIN, RIVER_BED_WIDTH_MAX);
-        double bankWidth = clamp(RIVER_BANK_WIDTH * s.riverWidth(), RIVER_BANK_WIDTH_MIN, RIVER_BANK_WIDTH_MAX);
-        double channelReach = bedWidth + bankWidth;
-        // The drainage field's gradient grows linearly with its frequency, so the radius that has to be
-        // covered - which is fixed in blocks - has to be converted with the same factor.
-        double gateField = channelReach * RIVER_GATE_GRADIENT * s.riverFrequency();
-        double river = 0.0;      // set below once the cross-section profile is known
-        double bankFactor = 1.0; // 0 across the flat bed, 1 at the rim / where there is no channel
-        double channel = 0.0;    // 1 where a real channel runs, 0 outside; CONSTANT across the section
-        if (Math.abs(drainage) < gateField) {
-            double gx = (riverField(x + RIVER_PROBE, z, seed, s) - drainage) / RIVER_PROBE;
-            double gz = (riverField(x, z + RIVER_PROBE, seed, s) - drainage) / RIVER_PROBE;
-            double gMag = Math.sqrt(gx * gx + gz * gz) + 1e-9;
-            // Distance to the channel's centre line, in blocks. Capped at the configured reach, so
-            // a flat patch of the drainage field can no longer widen a river past its clamped width;
-            // the cap is continuous and the bank profile has already reached the hillside by then,
-            // so nothing is clipped by it.
-            double distance = Math.min(Math.abs(drainage) / gMag, channelReach);
-
-            // Hermite/S-curve bank: flat bed, organic bank, and zero slope at BOTH ends, so there is
-            // no crease along the centre line and no ridge where the bank rejoins the terrain.
-            double t = clamp((distance - bedWidth) / bankWidth);
-            bankFactor = t * t * (3.0 - 2.0 * t);
-
-            // A corridor may only carve where it runs downhill along the local fall line.
-            double px = baseHeight(x + RIVER_PROBE, z, seed, s);
-            double pz = baseHeight(x, z + RIVER_PROBE, seed, s);
-            double dhx = (px - hSmooth) / RIVER_PROBE;
-            double dhz = (pz - hSmooth) / RIVER_PROBE;
-            double slope = Math.sqrt(dhx * dhx + dhz * dhz);
-            double tx = gz / gMag, tz = -gx / gMag; // unit tangent of the channel
-            double dot = (dhx * tx + dhz * tz) / (slope + 1e-9);
-            // Squaring this (as an earlier version did) pushes every partially-misaligned stretch
-            // toward zero, chopping an otherwise continuous corridor into disconnected fragments
-            // wherever the tangent and the downhill direction merely disagree a little rather than
-            // a lot - measured as "1408 components, biggest 0.8% of river cells" against a
-            // connectivity-preserving version of the same field. Left linear, a channel stays above
-            // the RIVER/LAKE biome threshold along its whole run instead of just its best-aligned
-            // stretches.
-            double slopeBlend = clamp(slope * 6.0);
-            double align = slopeBlend * Math.abs(dot) + (1.0 - slopeBlend);
-            // Rivers taper out of the folded ranges and strengthen downstream toward the sea.
-            double downstream = clamp(1.0 - (hSmooth - s.seaLevel()) / 190.0);
-            double shoreFade = clamp((hSmooth - (s.seaLevel() - 30.0)) / 20.0); // keep the deep seafloor smooth
-            double gate = clamp(1.0 - (hSmooth - (s.seaLevel() + 20.0)) / 260.0) * (1.0 - c.convergent() * 0.9) * shoreFade;
-            // Window that reaches exactly zero at the pre-filter edge, so the cheap reject can never
-            // leave a seam behind however steep the drainage field happens to be at that point.
-            double reachWindow = sstep((gateField - Math.abs(drainage)) / RIVER_GATE_FADE);
-            // Deliberately independent of bankFactor: this says HOW MUCH river runs here, not where
-            // across the cross-section the column sits, so it is the same on the bed and on both
-            // banks. The flat water surface below depends on exactly that.
-            channel = clamp(align * gate * reachWindow * (0.30 + 0.70 * downstream));
-        }
-        // Channel strength at this column (unchanged meaning for biomes and materials): full across
-        // the flat bed, tapering to nothing at the rim.
-        river = clamp((1.0 - bankFactor) * channel);
-
-        // --- lakes: only genuine basins low enough to hold water, clear of main channels ---
-        double basin = clamp((s.seaLevel() + 6.0 - h0) / 34.0);
-        double lake = clamp((lakeNoise - 0.40) / 0.18);
-        lake = lake * lake * basin * (1.0 - c.convergent()) * (1.0 - clamp(river * 3.0));
-
-        // Incision and water column, both anchored to the channel's CENTRE-LINE depth. Only the
-        // incision is graded across the bank, by the Hermite profile above; the anchor that sets the
-        // water surface is the same on the bed and on both banks. Two consequences, both deliberate:
-        //
-        //   * the water surface is a flat plane across the cross-section (the anchor does not vary
-        //     across it), so it is monotone by construction and cannot terrace into concentric rings;
-        //   * the water reaches the ground only where the bed has been cut deeper than the surface,
-        //     i.e. over a band of the bank, so the shoreline lands on real bank and never floods the
-        //     whole valley.
-        //
-        // Both anchors taper to zero with the channel and the basin mask, so nothing has to be switched
-        // off with a hard threshold. (The old `if (river > .02)` / `if (lake > .05)` pair put a step
-        // discontinuity straight into the water surface, which the block floor() then rendered as a
-        // stepped ring.)
+        // `size` grows with discharge and Strahler order - the stream-power relationship in its
+        // simplest game-ready form - so a trunk river is genuinely wider and deeper than the
+        // tributary feeding it, while the sliders set the overall scale rather than the shape.
         double depthScale = 0.5 + 0.5 * s.riverDepth();
-        double riverAnchor = RIVER_BED_DEPTH * depthScale * channel;
-        double lakeAnchor = LAKE_BED_DEPTH * depthScale * lake;
-        double riverProfile = 1.0 - bankFactor; // 1 across the flat bed, 0 where the bank meets the hills
-        double lakeProfile = sstep(lake);       // 1 in the middle of a basin, 0 at its shore
-        // The two bodies are mutually exclusive (the lake mask was multiplied by 1 - 3 * river just
-        // above), so the sums below are selects rather than mixtures, and every term is continuous.
-        double incision = riverAnchor * riverProfile + lakeAnchor * lakeProfile;
-        double h = clamp(h0 - incision, MIN_SURFACE, MAX_SURFACE);
+        double size = 0.45 + 0.85 * discharge + 0.30 * order;
+        double channelProfile = clamp((d.river() - 0.16) / 0.74);
+        double channelPresence = sstep(clamp((channelProfile - 0.30) / 0.20));
+        double riverBed = RIVER_BED_DEPTH * depthScale * size * channelProfile;
+        double riverPlane = RIVER_BED_DEPTH * depthScale * size * channelPresence;
+        double lakeProfile = sstep(clamp((d.lake() - 0.15) / 0.85));
+        double lakeBed = LAKE_BED_DEPTH * depthScale * lakeProfile;
+        double river = channelProfile;
+        double lake = lakeProfile;
+        // (The derived gradient/slope gate that used to live here is gone. It existed to stop the old
+        // noise field from carving where it was not running downhill; the drainage network already
+        // flows downhill by construction, so the gate has nothing left to do. The old noise-based
+        // lake mask is gone for the same reason - basins now come from the solver's depression fill.)
+
+        // Incision follows the cross-section profile; the water plane follows the corridor presence,
+        // so it is flat across the channel and falls away to the local fall line outside it. Water
+        // therefore appears exactly where the bed has been cut deeper than the plane - a band around
+        // the centre line - and never on the shoulders, which is what keeps the shoreline a single
+        // contour instead of a ring.
+        double incision = riverBed + lakeBed;
+        double h = clamp(h0 - incision, MIN_SURFACE, maxSurface(s));
 
         // Both fills are strictly below 1, so the water level always sits below the surrounding fall
         // line: a channel can never lift water above its own banks, for any slider combination, and it
         // equals h0 exactly where there is no channel or basin at all - so no film of water is ever
-        // left floating on dry ground. Water still fills to the configured sea level wherever the bed
-        // lies below it, so river mouths and ocean shelves stay flooded exactly as before.
-        double waterColumn = riverAnchor * RIVER_WATER_FILL + lakeAnchor * LAKE_WATER_FILL;
-        double inlandWater = Math.max(s.seaLevel(), h0 - riverAnchor - lakeAnchor + waterColumn);
+        // left floating on dry ground.
+        double waterLevel = h0
+                - riverPlane * (1.0 - RIVER_WATER_FILL)
+                - lakeBed * (1.0 - LAKE_WATER_FILL);
+        double inlandWater = Math.max(s.seaLevel(), waterLevel);
+        // A closed basin's real water level is its spill elevation, which the regional solver knows
+        // and this height model does not. Using it is what makes an endorheic lake fill to its rim
+        // instead of leaking away or overflowing it. The guard keeps the extra water out of shallow
+        // dips that only the erosion delta lowered, which would otherwise leave a film of water
+        // lying over dry land.
+        if (lakeProfile > 0.5 && d.waterSurface() > h + 2.0) {
+            inlandWater = Math.max(inlandWater, d.waterSurface());
+        }
 
         // Low-frequency value-noise fbm, stretched by CLIMATE_NORM so its warm/cold and wet/dry
         // extremes actually reach the biome table's thresholds, then clamped to the nominal range.
