@@ -8,6 +8,7 @@ import com.mojang.serialization.MapLike;
 import com.mojang.serialization.RecordBuilder;
 
 import java.util.List;
+import java.util.Locale;
 
 /**
  * Every tunable the terrain engine reads, stored as one dense array indexed by
@@ -45,10 +46,12 @@ public final class TerrainSettings {
 
     private final double[] values;
     private final long seedSalt;
+    private final TerrainEngine engine;
 
-    private TerrainSettings(double[] values, long seedSalt) {
+    private TerrainSettings(double[] values, long seedSalt, TerrainEngine engine) {
         this.values = values;
         this.seedSalt = seedSalt;
+        this.engine = engine;
     }
 
     /** The descriptor defaults, clamped so the table itself can never declare an illegal default. */
@@ -63,7 +66,7 @@ public final class TerrainSettings {
     public static TerrainSettings of(TerrainSetting key, double value) {
         double[] v = defaults();
         v[key.ordinal()] = key.clamp(value);
-        return new TerrainSettings(v, 0L);
+        return new TerrainSettings(v, 0L, TerrainEngine.GEOLOGICAL);
     }
 
     /** Builds settings from a raw array already indexed by {@link TerrainSetting#ordinal()}. */
@@ -72,10 +75,10 @@ public final class TerrainSettings {
         for (TerrainSetting k : TerrainSetting.values()) {
             v[k.ordinal()] = k.clamp(values[k.ordinal()]);
         }
-        return new TerrainSettings(v, seedSalt);
+        return new TerrainSettings(v, seedSalt, TerrainEngine.GEOLOGICAL);
     }
 
-    public static final TerrainSettings DEFAULT = new TerrainSettings(defaults(), 0L);
+    public static final TerrainSettings DEFAULT = new TerrainSettings(defaults(), 0L, TerrainEngine.GEOLOGICAL);
 
     /** Raw (already clamped) value of one setting. */
     public double raw(TerrainSetting key) {
@@ -113,7 +116,16 @@ public final class TerrainSettings {
                 if (deep != null) v[TerrainSetting.OCEAN_DEPTH.ordinal()] = TerrainSetting.OCEAN_DEPTH.clamp(deep);
             }
             Double salt = number(ops, map.get("seed_salt"));
-            return DataResult.success(Pair.of(fromRaw(v, salt == null ? 0L : salt.longValue()), input));
+            // Engine selection (default GEOLOGICAL for old worlds missing the field)
+            TerrainEngine eng = TerrainEngine.GEOLOGICAL;
+            T engineValue = map.get("engine");
+            if (engineValue != null) {
+                String engStr = ops.getStringValue(engineValue).result().orElse(null);
+                if (engStr != null) {
+                    try { eng = TerrainEngine.valueOf(engStr.toUpperCase(java.util.Locale.ROOT)); } catch (Exception ignored) {}
+                }
+            }
+            return DataResult.success(Pair.of(new TerrainSettings(v, salt == null ? 0L : salt.longValue(), eng), input));
         }
 
         @Override
@@ -123,6 +135,9 @@ public final class TerrainSettings {
                 builder.add(k.jsonKey(), ops.createDouble(s.values[k.ordinal()]));
             }
             builder.add("seed_salt", ops.createLong(s.seedSalt));
+            if (s.engine != TerrainEngine.GEOLOGICAL) {
+                builder.add("engine", ops.createString(s.engine.asString()));
+            }
             return builder.build(prefix);
         }
 
@@ -200,13 +215,21 @@ public final class TerrainSettings {
     public TerrainSettings with(TerrainSetting key, double value) {
         double[] v = values.clone();
         v[key.ordinal()] = key.clamp(value);
-        return new TerrainSettings(v, seedSalt);
+        return new TerrainSettings(v, seedSalt, engine);
     }
 
     /** Returns a copy with a different seed salt, which decorrelates otherwise identical worlds. */
     public TerrainSettings withSeedSalt(long salt) {
-        return new TerrainSettings(values.clone(), salt);
+        return new TerrainSettings(values.clone(), salt, engine);
     }
+
+    /** Returns a copy with a different terrain engine. */
+    public TerrainSettings withEngine(TerrainEngine engine) {
+        return new TerrainSettings(values.clone(), seedSalt, engine);
+    }
+
+    /** Convenience: the selected terrain engine. */
+    public TerrainEngine engine() { return engine; }
 
     /**
      * The named continental thresholds, following ReTerraForged's
@@ -296,12 +319,12 @@ public final class TerrainSettings {
     public boolean equals(Object o) {
         if (this == o) return true;
         if (!(o instanceof TerrainSettings other)) return false;
-        return seedSalt == other.seedSalt && java.util.Arrays.equals(values, other.values);
+        return seedSalt == other.seedSalt && engine == other.engine && java.util.Arrays.equals(values, other.values);
     }
 
     @Override
     public int hashCode() {
-        return 31 * java.util.Arrays.hashCode(values) + Long.hashCode(seedSalt);
+        return 31 * (31 * java.util.Arrays.hashCode(values) + Long.hashCode(seedSalt)) + engine.hashCode();
     }
 
     @Override
@@ -312,6 +335,6 @@ public final class TerrainSettings {
             if (i > 0) sb.append(", ");
             sb.append(keys[i].jsonKey()).append('=').append(values[i]);
         }
-        return sb.append(", seed_salt=").append(seedSalt).append(']').toString();
+        return sb.append(", seed_salt=").append(seedSalt).append(", engine=").append(engine).append(']').toString();
     }
 }
