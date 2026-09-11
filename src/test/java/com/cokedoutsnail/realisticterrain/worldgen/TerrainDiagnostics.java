@@ -1,6 +1,5 @@
 package com.cokedoutsnail.realisticterrain.worldgen;
 
-import com.cokedoutsnail.realisticterrain.worldgen.hydro.Drainage;
 import org.junit.jupiter.api.Test;
 
 import javax.imageio.ImageIO;

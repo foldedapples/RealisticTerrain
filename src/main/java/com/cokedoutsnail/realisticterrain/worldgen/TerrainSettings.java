@@ -234,6 +234,9 @@ public final class TerrainSettings {
         return s;
     }
 
+    // See TerrainSetting.CATEGORIES: List.of infers a @NonNull element type, which Eclipse null
+    // analysis reports as an unsafe conversion into this unannotated declaration.
+    @SuppressWarnings("null")
     public static final List<Profile> PROFILES = List.of(
             new Profile("realisticterrain.profile.continental",
                     profile(TerrainSetting.BIOME_SCALE, 1.1, TerrainSetting.RIVER_FREQUENCY, 0.8)),

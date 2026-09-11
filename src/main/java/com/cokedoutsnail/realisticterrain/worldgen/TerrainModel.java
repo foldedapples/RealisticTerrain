@@ -38,9 +38,6 @@ public final class TerrainModel {
             double continent    // -1..1 raw continentalness, for genuine coastal proximity (see TerrainBiomeSource)
     ) {}
 
-    /** Probe distance, in blocks, for the drainage field's gradient and the fall-line slope. */
-    private static final double RIVER_PROBE = 28.0;
-
     /**
      * Mapping from the droplet pass's water traffic onto the climate moisture field. {@code FLOOR} is
      * the traffic the median column sees (measured at 0.028), so anything at or below it contributes
@@ -73,19 +70,6 @@ public final class TerrainModel {
     private static final double CLIMATE_NORM = 0.62;
 
     /**
-     * Half-width of a river's <em>flat</em> bed, in blocks, at {@code riverWidth = 1}. It is scaled
-     * by the river-width slider and then clamped: those clamps are the guarantee that a wide-river
-     * setting produces a big river rather than an inland fjord, because the corridor is now measured
-     * in blocks instead of in units of the drainage field.
-     */
-    private static final double RIVER_BED_WIDTH = 3.0;
-    private static final double RIVER_BED_WIDTH_MIN = 1.5;
-    private static final double RIVER_BED_WIDTH_MAX = 9.0;
-    /** Width, in blocks, of the sloped bank that carries the flat bed back up to the hillside. */
-    private static final double RIVER_BANK_WIDTH = 15.0;
-    private static final double RIVER_BANK_WIDTH_MIN = 6.0;
-    private static final double RIVER_BANK_WIDTH_MAX = 30.0;
-    /**
      * Incision of a channel's centre line into the fall line, in blocks, at {@code riverDepth = 1}.
      * The water column is derived from this through {@link #RIVER_WATER_FILL}, never tuned separately.
      */
@@ -103,21 +87,6 @@ public final class TerrainModel {
     /** Centre-line incision of a lake basin, in blocks, and the fraction of it that stands as water. */
     private static final double LAKE_BED_DEPTH = 10.0;
     private static final double LAKE_WATER_FILL = 0.40;
-    /**
-     * Nominal drainage-field gradient, in field units per block, at {@code riverFrequency = 1}. The
-     * pre-filter radius is {@code (bedWidth + bankWidth) * this * riverFrequency}, so the cheap reject
-     * skips the gradient probes for the vast majority of columns while still covering the whole
-     * corridor. Measured on the default field: the per-block gradient runs p50 = 0.0014, p90 = 0.0038,
-     * p99 = 0.0068, so this (just over p90) covers the full corridor almost everywhere. It scales with
-     * riverFrequency because a higher drainage frequency stretches the field's gradient linearly, and
-     * the radius that has to be covered is fixed in blocks. Exactness is not required anyway: the
-     * corridor is clamped to a fixed reach in blocks and the carve is additionally weighted by a window
-     * that reaches exactly zero at the filter's edge, so an under-estimate tapers the outer bank
-     * gracefully rather than leaving a cliff.
-     */
-    private static final double RIVER_GATE_GRADIENT = 0.0038;
-    /** Width, in field units, of the fade that takes the carve to zero at the pre-filter edge. */
-    private static final double RIVER_GATE_FADE = 0.03;
 
     /** Upper bound on the modelled surface height. */
     public static final double MAX_SURFACE = 1900.0;
@@ -412,19 +381,5 @@ public final class TerrainModel {
         double threshold = .78 - Math.min(.12, s.roughness() * .035)
                 - Math.min(.18, (s.caveGeneration() - 1.0f) * .09f);
         return Math.abs(n1 * .68 + n2 * .32) > threshold;
-    }
-
-    /**
-     * The raw drainage field: zero along a channel's centre line, positive on one side of it and
-     * negative on the other. Package-private rather than private so the terrain tests can measure the
-     * channel geometry directly instead of re-deriving the field and drifting out of sync with it.
-     */
-    static double riverField(double x, double z, long seed, TerrainSettings s) {
-        TerrainCache.Node c = TerrainCache.sample(x, z, seed, s);
-        double wx = x + c.warpX() * 420.0;
-        double wz = z + c.warpZ() * 420.0;
-        double wx2 = wx + Noise2D.fbm(wx / 170.0, wz / 170.0, seed + 193, 2, 2.3, .5) * 150.0;
-        double wz2 = wz + Noise2D.fbm(wx / 170.0, wz / 170.0, seed + 197, 2, 2.3, .5) * 150.0;
-        return Noise2D.fbm(wx2 / (760.0 / s.riverFrequency()), wz2 / (760.0 / s.riverFrequency()), seed + 151, 3, 2.0, .52);
     }
 }

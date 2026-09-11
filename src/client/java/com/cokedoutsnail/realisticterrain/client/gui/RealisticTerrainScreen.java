@@ -44,10 +44,21 @@ public final class RealisticTerrainScreen extends Screen {
     public RealisticTerrainScreen(CreateWorldScreen parent, GeneratorOptionsHolder holder) {
         super(Text.translatable("realisticterrain.customize.title"));
         this.parent = parent;
-        // GeneratorOptionsHolder has no direct "selected dimensions" accessor - only the
-        // registry every DimensionOptions (overworld/nether/end) lives in - so the overworld's
-        // chunk generator has to be looked up by its well-known registry key.
-        this.s = holder.dimensionOptionsRegistry().getOptionalValue(DimensionOptions.OVERWORLD)
+        this.s = overworldSettings(holder);
+    }
+
+    /**
+     * The pending world's overworld generator settings, or the defaults if it is not ours yet.
+     *
+     * <p>{@code GeneratorOptionsHolder} has no direct "selected dimensions" accessor - only the registry
+     * every {@code DimensionOptions} (overworld/nether/end) lives in - so the overworld's chunk
+     * generator has to be looked up by its well-known registry key. Eclipse null analysis reports the
+     * registry lookup's generics as an unchecked conversion because the registry API carries no null
+     * annotations, hence the suppression; the lookup itself is null-safe by construction.
+     */
+    @SuppressWarnings("null")
+    private static TerrainSettings overworldSettings(GeneratorOptionsHolder holder) {
+        return holder.dimensionOptionsRegistry().getOptionalValue(DimensionOptions.OVERWORLD)
                 .map(DimensionOptions::chunkGenerator)
                 .filter(generator -> generator instanceof RealisticChunkGenerator)
                 .map(generator -> ((RealisticChunkGenerator) generator).settings())

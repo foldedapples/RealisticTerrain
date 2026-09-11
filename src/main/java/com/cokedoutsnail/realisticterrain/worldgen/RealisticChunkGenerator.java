@@ -30,7 +30,6 @@ import net.minecraft.world.gen.chunk.ChunkGenerator;
 import net.minecraft.world.gen.chunk.VerticalBlockSample;
 import net.minecraft.world.gen.chunk.placement.StructurePlacementCalculator;
 import net.minecraft.world.gen.feature.ConfiguredFeature;
-import net.minecraft.world.gen.feature.PlacedFeature;
 import net.minecraft.world.gen.noise.NoiseConfig;
 import net.minecraft.world.SpawnHelper;
 import net.minecraft.util.math.random.CheckedRandom;
@@ -57,6 +56,13 @@ public final class RealisticChunkGenerator extends ChunkGenerator {
      * surface inside the world even if the model is retuned later.
      */
     private static final int SURFACE_FLOOR = MIN_Y + 5;
+    // Eclipse null analysis (enabled by this project's .vscode settings) flags the generic signatures
+    // of RecordCodecBuilder and BiomeSource.CODEC because Mojang and DataFixerUpper ship no null
+    // annotations at all, so every value they hand back counts as "unannotated" and the method
+    // references below are reported as unchecked conversions. There is nothing to fix in this code -
+    // a codec's group() never passes null to forGetter - so the diagnostic is suppressed at its source
+    // rather than left to drown out real warnings.
+    @SuppressWarnings("null")
     public static final MapCodec<RealisticChunkGenerator> CODEC = RecordCodecBuilder.mapCodec(i -> i.group(
             BiomeSource.CODEC.fieldOf("biome_source").forGetter(RealisticChunkGenerator::getBiomeSource),
             TerrainSettings.CODEC.fieldOf("settings").forGetter(RealisticChunkGenerator::settings)
@@ -308,8 +314,6 @@ public final class RealisticChunkGenerator extends ChunkGenerator {
                     f.generate(world, this, random, new BlockPos(x, y, z)));
         }
     }
-
-    private static double clamp01(double v){ return v<0?0:(v>1?1:v); }
 
     /**
      * Vanilla's FLUID_SPRINGS decoration step litters underground open space with lone, non-flowing

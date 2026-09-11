@@ -12,6 +12,9 @@ import java.util.stream.Stream;
 
 /** A serializable coordinate-scaling wrapper around any vanilla biome source. */
 public final class ScaledBiomeSource extends BiomeSource {
+    // See RealisticChunkGenerator.CODEC: Mojang and DataFixerUpper ship no null annotations, so the
+    // record builder's generics are reported as unchecked conversions by Eclipse null analysis.
+    @SuppressWarnings("null")
     public static final MapCodec<ScaledBiomeSource> CODEC = RecordCodecBuilder.mapCodec(instance -> instance.group(
             BiomeSource.CODEC.fieldOf("source").forGetter(ScaledBiomeSource::source),
             Codec.floatRange(0.25F, 4.0F).optionalFieldOf("scale", 1.0F).forGetter(ScaledBiomeSource::scale)

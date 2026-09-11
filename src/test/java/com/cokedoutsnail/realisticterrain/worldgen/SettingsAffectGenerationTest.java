@@ -5,7 +5,6 @@ import org.junit.jupiter.api.Test;
 import java.util.EnumSet;
 import java.util.Set;
 
-import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**

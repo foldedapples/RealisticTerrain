@@ -32,13 +32,24 @@ public abstract class WorldCreatorScreenMixin {
 
     @Inject(method = "getLevelScreenProvider", at = @At("HEAD"), cancellable = true)
     private void realisticterrain$provideCustomizeScreen(CallbackInfoReturnable<LevelScreenProvider> cir) {
-        boolean ours = this.generatorOptionsHolder.dimensionOptionsRegistry()
+        if (realisticterrain$isOurWorld()) {
+            cir.setReturnValue((LevelScreenProvider) RealisticTerrainScreen::new);
+        }
+    }
+
+    /**
+     * Whether the pending world is currently configured to use our chunk generator.
+     *
+     * <p>Eclipse null analysis reports the registry lookup's generics as an unchecked conversion
+     * because the registry API carries no null annotations; the lookup itself is null-safe, so the
+     * diagnostic is suppressed rather than left in the build output.
+     */
+    @SuppressWarnings("null")
+    private boolean realisticterrain$isOurWorld() {
+        return this.generatorOptionsHolder.dimensionOptionsRegistry()
                 .getOptionalValue(DimensionOptions.OVERWORLD)
                 .map(DimensionOptions::chunkGenerator)
                 .filter(generator -> generator instanceof RealisticChunkGenerator)
                 .isPresent();
-        if (ours) {
-            cir.setReturnValue((LevelScreenProvider) RealisticTerrainScreen::new);
-        }
     }
 }

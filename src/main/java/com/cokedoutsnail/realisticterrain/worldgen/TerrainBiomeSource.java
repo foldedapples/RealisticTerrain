@@ -28,6 +28,9 @@ import java.util.stream.Stream;
  * only matters for the brief window before worldgen starts.
  */
 public final class TerrainBiomeSource extends BiomeSource {
+    // See RealisticChunkGenerator.CODEC: Mojang and DataFixerUpper ship no null annotations, so the
+    // record builder's generics are reported as unchecked conversions by Eclipse null analysis.
+    @SuppressWarnings("null")
     public static final MapCodec<TerrainBiomeSource> CODEC = RecordCodecBuilder.mapCodec(instance -> instance.group(
             BiomeSource.CODEC.fieldOf("fallback").forGetter(TerrainBiomeSource::fallback),
             Codec.floatRange(0.25F, 4.0F).optionalFieldOf("scale", 1.0F).forGetter(TerrainBiomeSource::scale),

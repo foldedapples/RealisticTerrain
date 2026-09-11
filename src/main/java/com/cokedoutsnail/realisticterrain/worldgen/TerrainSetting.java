@@ -90,6 +90,10 @@ public enum TerrainSetting {
         public String id() { return id; }
     }
 
+    // List.of infers a @NonNull element type, which Eclipse null analysis then reports as an unsafe
+    // conversion into this unannotated declaration. The list is immutable and never null-element, so
+    // the diagnostic is suppressed rather than worked around.
+    @SuppressWarnings("null")
     public static final List<Category> CATEGORIES = List.of(Category.values());
 
     private final String jsonKey;
@@ -121,9 +125,6 @@ public enum TerrainSetting {
     public double defaultValue() { return defaultValue; }
     public boolean integral() { return integral; }
     public String tooltip() { return tooltip; }
-
-    /** The middle of this setting's range, rounded like the setting itself. */
-    public double midpoint() { return clamp((min + max) * 0.5); }
 
     /** Translation key for the setting's display name. */
     public String nameKey() { return "realisticterrain.setting." + jsonKey; }
