@@ -1,0 +1,11 @@
+{
+  "required": false,
+  "package": "com.cokedoutsnail.realisticterrain.mixin.client",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "LevelScreenProviderAccessor"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}
