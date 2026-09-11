@@ -38,8 +38,6 @@ public final class TerrainModel {
         // floor()-based terracing, which carved the terrain into blocky, hard-edged plateaus.
         h -= Math.abs(erosion) * ridge * 45.0 * s.erosionIntensity();
 
-        double riverWater = s.seaLevel() + 8.0 + Math.max(0, continent+.18)*52.0;
-        double lakeWater = s.seaLevel() + 12.0 + Math.max(0, continent+.12)*34.0;
         // Carve valleys by subtracting a bounded, continuous depth from the *local* terrain rather
         // than clamping toward an absolute elevation - clamping toward a near-sea-level target
         // regardless of surrounding height tore ~350-block sheer canyons through tall mountains.
@@ -49,9 +47,14 @@ public final class TerrainModel {
         h -= lake * (28.0 + 40.0*s.riverDepth());
         h = Math.max(-32, Math.min(1300, h));
 
+        // The water surface must be derived from the *carved* height, not an independent formula:
+        // computing it separately (as this used to) let the water plane end up well above the
+        // actual ground anywhere the two disagreed, flooding the terrain around every river/lake.
+        // Filling only a few blocks above the freshly-carved bed keeps water glued to the ground
+        // it was cut into, the same way real river/lake beds are always below their water line.
         double inlandWater = s.seaLevel();
-        if (river > .12) inlandWater = Math.max(inlandWater, riverWater);
-        if (lake > .18) inlandWater = Math.max(inlandWater, lakeWater);
+        if (river > .02) inlandWater = Math.max(inlandWater, h + river * (2.0 + 4.0*s.riverDepth()));
+        if (lake > .05) inlandWater = Math.max(inlandWater, h + lake * (3.0 + 7.0*s.riverDepth()));
 
         double moisture = Noise2D.fbm(x/(1700.0*s.biomeScale()),z/(1700.0*s.biomeScale()),seed+191,4,2,.5);
         double temperature = Noise2D.fbm(x/(2200.0*s.biomeScale()),z/(2200.0*s.biomeScale()),seed+211,4,2,.5) - Math.max(0,h-250)/1650.0;
