@@ -33,7 +33,8 @@ public final class TerrainModel {
             double convergent,  // 0..1 collision-margin strength (orogeny host)
             double divergent,   // 0..1 rift-margin strength (valley/trench host)
             double fault,       // 0..1 proximity to an active plate margin
-            double soil         // 0..1 soil depth from hydraulic erosion (0=bedrock, 1=deep soil)
+            double soil,        // 0..1 soil depth from hydraulic erosion (0=bedrock, 1=deep soil)
+            double continent    // -1..1 raw continentalness, for genuine coastal proximity (see TerrainBiomeSource)
     ) {}
 
     /** Probe distance, in blocks, for the drainage field's gradient and the fall-line slope. */
@@ -67,16 +68,17 @@ public final class TerrainModel {
      * Incision of a channel's centre line into the fall line, in blocks, at {@code riverDepth = 1}.
      * The water column is derived from this through {@link #RIVER_WATER_FILL}, never tuned separately.
      */
-    private static final double RIVER_BED_DEPTH = 7.5;
+    private static final double RIVER_BED_DEPTH = 11.0;
     /**
      * Fraction of a channel's centre-line incision that stands as water. The incision is derived at
      * {@link #RIVER_BED_DEPTH} and the water level from the incision, so this fraction being below 1
      * is what structurally guarantees the water always sits below the ground beside the channel - for
      * every combination of sliders - and it is also what sets how far up the bank the shoreline
-     * reaches. 0.4 is a wide, shallow river: about 3 blocks of water in a 7.5-block channel at
-     * {@code riverDepth = 1}, with the shoreline a little over halfway out along the bank.
+     * reaches. 0.55 gives a proper river rather than a trickle: about 6 blocks of water in an
+     * 11-block channel at {@code riverDepth = 1}, with the shoreline a little over halfway out
+     * along the bank.
      */
-    private static final double RIVER_WATER_FILL = 0.40;
+    private static final double RIVER_WATER_FILL = 0.55;
     /** Centre-line incision of a lake basin, in blocks, and the fraction of it that stands as water. */
     private static final double LAKE_BED_DEPTH = 10.0;
     private static final double LAKE_WATER_FILL = 0.40;
@@ -116,7 +118,7 @@ public final class TerrainModel {
      * ocean; it is kept fixed so the depth slider changes how deep the sea is, not how abrupt the
      * continental margin looks.
      */
-    private static final double SHELF_SPAN = 0.55;
+    private static final double SHELF_SPAN = 0.85;
 
     private static double clamp(double v) {
         return Math.max(0.0, Math.min(1.0, v));
@@ -153,11 +155,17 @@ public final class TerrainModel {
         // punching through the world floor (MIN_SURFACE keeps them in-world). ReTerraForged's
         // "deepOcean" control point.
         double oceanBasin = -clamp((coast - continent) / SHELF_SPAN) * s.oceanDepth();
-        // Orogeny: folded chains only where plates collide (convergent margins).
+        // Orogeny: folded chains only where plates collide (convergent margins). The exponent used
+        // to run 0.5-1.35 (0.5 + 0.85 * ridgeSharpness at ridgeSharpness in [0.25, 3]): anything
+        // above 1 compresses the belt's ridged fabric toward its own extremes, so instead of a range
+        // with foothills, shoulders and a crest it produced a nearly flat apron with a few needle-thin
+        // spikes at full amplitude - "too tiny and crazy high" for exactly the columns whose belt
+        // value happened to be near 1. Keeping the exponent at or below 1 spreads that same 0..1
+        // range out over real shoulder terrain instead of concentrating it at the peak.
         double collision = c.convergent();
-        double orogeny = Math.pow(c.belt(), 0.5 + 0.85 * s.ridgeSharpness());
+        double orogeny = Math.pow(c.belt(), 0.30 + 0.45 * s.ridgeSharpness());
         double collisionMask = collision * clamp(0.35 + 0.65 * c.plates());
-        double range = orogeny * collisionMask * 620.0 * s.mountainHeight();
+        double range = orogeny * collisionMask * 560.0 * s.mountainHeight();
         // Divergent margins: ocean trenches below sea level, continental rifts carved into valleys.
         double trench = clamp(-continent) * c.divergent() * 95.0 * s.riverDepth();
         double continentalRift = clamp(continent) * c.divergent() * 60.0 * Math.max(1.0, s.canyonDepth()) * (0.6 + 0.4 * c.fault());
@@ -273,9 +281,15 @@ public final class TerrainModel {
             double slope = Math.sqrt(dhx * dhx + dhz * dhz);
             double tx = gz / gMag, tz = -gx / gMag; // unit tangent of the channel
             double dot = (dhx * tx + dhz * tz) / (slope + 1e-9);
+            // Squaring this (as an earlier version did) pushes every partially-misaligned stretch
+            // toward zero, chopping an otherwise continuous corridor into disconnected fragments
+            // wherever the tangent and the downhill direction merely disagree a little rather than
+            // a lot - measured as "1408 components, biggest 0.8% of river cells" against a
+            // connectivity-preserving version of the same field. Left linear, a channel stays above
+            // the RIVER/LAKE biome threshold along its whole run instead of just its best-aligned
+            // stretches.
             double slopeBlend = clamp(slope * 6.0);
             double align = slopeBlend * Math.abs(dot) + (1.0 - slopeBlend);
-            align *= align;
             // Rivers taper out of the folded ranges and strengthen downstream toward the sea.
             double downstream = clamp(1.0 - (hSmooth - s.seaLevel()) / 190.0);
             double shoreFade = clamp((hSmooth - (s.seaLevel() - 30.0)) / 20.0); // keep the deep seafloor smooth
@@ -343,7 +357,7 @@ public final class TerrainModel {
         double slopeHint = clamp(Math.abs(erosion) * (0.4 + 0.6 * ridge));
 
         return new Sample(h, inlandWater, river, lake, ridge, moisture, temperature, slopeHint,
-                c.plates(), c.convergent(), c.divergent(), c.fault(), hydro.soil());
+                c.plates(), c.convergent(), c.divergent(), c.fault(), hydro.soil(), c.continent());
     }
 
     public static boolean cave(long seed, int x, int y, int z, TerrainSettings s) {
