@@ -4,7 +4,7 @@
   "version": "${version}",
   "name": "Realistic Terrain",
   "description": "Large-scale erosion-inspired mountains, valleys, rivers and coastlines with a configurable world preset.",
-  "authors": ["cokedoutsnail"],
+  "authors": ["cokedoutsnail", "FoldedApples"],
   "license": "MIT",
   "environment": "*",
   "entrypoints": {

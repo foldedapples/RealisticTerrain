@@ -20,6 +20,11 @@ import java.util.Map;
 @Mixin(LevelScreenProvider.class)
 public interface LevelScreenProviderAccessor {
     @Accessor("WORLD_PRESET_TO_SCREEN_PROVIDER")
+    static Map<?, ?> realisticterrain$getScreenProviders() {
+        throw new AssertionError("Mixin was not applied");
+    }
+
+    @Accessor("WORLD_PRESET_TO_SCREEN_PROVIDER")
     @Mutable
     static void realisticterrain$setScreenProviders(Map<?, ?> value) {
         throw new AssertionError("Mixin was not applied");

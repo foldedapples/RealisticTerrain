@@ -1,20 +1,21 @@
 # Realistic Terrain
 
-A Fabric 1.21.11 world-generation mod for continent-scale mountain ranges, broad valleys, terraced foothills, winding river corridors, natural coasts, altitude-driven snow, and mountain caves.
+A Fabric 1.21.11 world-generation mod for continent-scale mountain ranges, broad valleys, warped river networks, natural coasts, altitude-driven snow, and mountain caves.
 
 ## Status
 
-This repository contains a working **0.1.0 alpha**. It compiles against Minecraft 1.21.11, launches on Fabric Loader 0.19.5, loads its registries, creates a `realisticterrain:realistic` world, and serializes the custom generator into `level.dat`.
+This repository contains a working **0.2.0 alpha**. It compiles against Minecraft 1.21.11, launches on Fabric Loader 0.19.5, loads its registries, creates a `realisticterrain:realistic` world, and serializes the custom generator into `level.dat`.
 
 The generator is intentionally source-first and experimental. Back up worlds before updating the mod; changing terrain settings after chunks exist will produce borders between old and new terrain.
 
 ## Features
 
-- Selectable **Realistic Terrain** preset in Create World.
-- Dedicated customization screen with eleven sliders and a live 64×64 top-down preview.
-- Large-scale continental and mountain masks rather than repeated vanilla-sized hills.
-- Ridged peaks, erosion channels, exposed steep rock, terraced foothills, beaches, and coastal shelves.
-- Warped, connected river fields with configurable width, frequency, and carving depth.
+- Selectable **Realistic Terrain** preset in Create World, with a **Customize** screen (eleven sliders and a live 64×64 top-down preview).
+- A multi-layer terrain model, not a single flat noise expression: continent-scale landmass, regional relief, and mountain ranges are separate, independently tunable layers.
+- Real gradient (Perlin-style) noise throughout, with domain warping so ranges, coastlines, and rivers follow organic, non-grid-aligned lines.
+- An erosion-aware ridged multifractal for mountains - sharp, warped ridgelines with genuinely flatter valleys and flanks, instead of uniform noisy roughness.
+- Warped river network that carves valleys relative to the *local* terrain (never toward a fixed elevation), narrower and shallower through steep mountainside than through open lowland.
+- A smoothing pass over the finished heightmap that caps how steep any single wall can get, regardless of which layers combined to produce it.
 - Biome-coordinate scaling and biome-aware surface temperature/precipitation.
 - Soft snow-line probability instead of a hard horizontal cutoff.
 - Mountain caves generated without a custom chunk format.
@@ -76,6 +77,11 @@ Realistic Terrain does not replace chunk storage, sections, palettes, heightmaps
 ## Water color note
 
 The terrain generator creates shallow shelves and deep channels. Vanilla water tint is biome-based rather than depth-based, so exact turquoise-to-deep-blue grading belongs in a client shader or rendering module. The generator does not substitute fake water blocks that would break survival behavior or LoD renderers.
+
+## Credits
+
+- cokedoutsnail - original author
+- FoldedApples - maintainer
 
 ## License
 

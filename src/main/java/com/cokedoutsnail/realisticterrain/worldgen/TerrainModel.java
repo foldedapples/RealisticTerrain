@@ -13,6 +13,8 @@ import com.cokedoutsnail.realisticterrain.noise.Noise2D;
  *   4. A warped river network that carves valleys relative to the *local* terrain, never toward a
  *      fixed elevation.
  *   5. Lakes, in the same low-relief basins that would realistically collect water.
+ *   6. A 5-point smoothing pass over the finished height (see sample()) that caps how steep any
+ *      wall can get, regardless of which layers combined to produce it.
  * Every carve is bounded and continuous (no floor()/stair-stepping), and the water surface is
  * always derived from the already-carved ground height plus a small offset, never computed
  * independently - both of those were the source of real bugs (blocky terracing, water floating
@@ -22,7 +24,10 @@ public final class TerrainModel {
     private TerrainModel() {}
     public record Sample(double height, double waterLevel, double river, double lake, double ridge, double moisture, double temperature, double slopeHint) {}
 
-    public static Sample sample(long seed, double x, double z, TerrainSettings s) {
+    /** Everything about a single column's raw (pre-smoothing) geology. */
+    private record Geology(double height, double river, double lake, double ridge, double erosionDetail, double warpedContinentX, double warpedContinentZ) {}
+
+    private static Geology geology(long seed, double x, double z, TerrainSettings s) {
         seed ^= s.seedSalt();
 
         // --- Domain warp: distorts the coordinate space itself so features follow organic,
@@ -76,25 +81,57 @@ public final class TerrainModel {
         double h = lowland + mountain;
         h -= Math.abs(erosionDetail) * ridge * 42.0 * s.erosionIntensity();
 
-        // Carve valleys by subtracting a bounded, continuous depth from the *local* terrain rather
-        // than clamping toward an absolute elevation - clamping toward a near-sea-level target
-        // regardless of surrounding height tore sheer canyons through tall mountains.
-        h -= river * (35.0 + 70.0*s.riverDepth());
+        // Rivers cut *narrower and shallower* through steep mountainside than through gentle
+        // lowland: a full-width, full-depth channel blasted straight through a mountain's own
+        // steep slope inherits that slope on its bed, which is how a river ends up with a
+        // near-vertical bank. Damping the carve by how steep the *uncarved* ground already is
+        // keeps rivers realistically narrow where they cross real mountainsides, and full-sized
+        // in the plains where they're supposed to be wide.
+        double steepnessDamp = 1.0 - clamp(mountain / 260.0) * 0.65;
+        h -= river * (40.0 + 80.0*s.riverDepth()) * steepnessDamp;
         h -= lake * (26.0 + 36.0*s.riverDepth());
         h = Math.max(-32, Math.min(1300, h));
 
-        // The water surface must be derived from the *carved* height, not an independent formula:
-        // computing it separately let the water plane end up well above the actual ground anywhere
-        // the two disagreed, flooding the terrain around every river/lake. Filling only a few
-        // blocks above the freshly-carved bed keeps water glued to the ground it was cut into.
-        double inlandWater = s.seaLevel();
-        if (river > .02) inlandWater = Math.max(inlandWater, h + river * (2.0 + 4.0*s.riverDepth()));
-        if (lake > .05) inlandWater = Math.max(inlandWater, h + lake * (3.0 + 7.0*s.riverDepth()));
+        return new Geology(h, river, lake, ridge, erosionDetail, cx, cz);
+    }
 
-        double moistureBase = Noise2D.fbm(cx/(1700.0*s.biomeScale()),cz/(1700.0*s.biomeScale()),seed+191,5,2,.5);
-        double moisture = clampRange(moistureBase + river*0.25 + lake*0.3, -1.0, 1.0);
-        double temperature = Noise2D.fbm(cx/(2200.0*s.biomeScale()),cz/(2200.0*s.biomeScale()),seed+211,5,2,.5) - Math.max(0,h-250)/1650.0;
-        return new Sample(h, inlandWater, river, lake, ridge, moisture, temperature, Math.abs(erosionDetail));
+    public static Sample sample(long seed, double x, double z, TerrainSettings s) {
+        Geology g = geology(seed, x, z, s);
+
+        // Smooth the final height over a small 5-point stencil (center + 4 neighbors a short
+        // distance away). Every layer above is individually continuous, but *combinations* of
+        // them (a river cutting across a steep ridge, for instance) could still add up to a
+        // wall steep enough to look broken and alias badly up close - the same way a photo of
+        // a real, perfectly smooth cliff can still look "jagged" at extreme angles. Averaging a
+        // few nearby raw samples caps how steep any single wall can get regardless of which
+        // layers combined to produce it, which is a much more reliable guarantee than trying to
+        // predict and tune away every possible layer interaction by hand.
+        double radius = 12.0;
+        double neighborSum = heightAt(seed, x + radius, z, s)
+                + heightAt(seed, x - radius, z, s)
+                + heightAt(seed, x, z + radius, s)
+                + heightAt(seed, x, z - radius, s);
+        double h = (g.height() * 4.0 + neighborSum) / 8.0;
+
+        // The water surface must be derived from the *smoothed, carved* height, not an
+        // independent formula: computing it separately let the water plane end up well above
+        // the actual ground anywhere the two disagreed, flooding the terrain around every
+        // river/lake. Filling only a few blocks above the freshly-carved bed keeps water glued
+        // to the ground it was cut into.
+        double inlandWater = s.seaLevel();
+        if (g.river() > .02) inlandWater = Math.max(inlandWater, h + g.river() * (2.0 + 4.0*s.riverDepth()));
+        if (g.lake() > .05) inlandWater = Math.max(inlandWater, h + g.lake() * (3.0 + 7.0*s.riverDepth()));
+
+        long saltedSeed = seed ^ s.seedSalt();
+        double cx = g.warpedContinentX(), cz = g.warpedContinentZ();
+        double moistureBase = Noise2D.fbm(cx/(1700.0*s.biomeScale()),cz/(1700.0*s.biomeScale()),saltedSeed+191,5,2,.5);
+        double moisture = clampRange(moistureBase + g.river()*0.25 + g.lake()*0.3, -1.0, 1.0);
+        double temperature = Noise2D.fbm(cx/(2200.0*s.biomeScale()),cz/(2200.0*s.biomeScale()),saltedSeed+211,5,2,.5) - Math.max(0,h-250)/1650.0;
+        return new Sample(h, inlandWater, g.river(), g.lake(), g.ridge(), moisture, temperature, Math.abs(g.erosionDetail()));
+    }
+
+    private static double heightAt(long seed, double x, double z, TerrainSettings s) {
+        return geology(seed, x, z, s).height();
     }
 
     private static double riverFactor(double field, double halfWidth) {
