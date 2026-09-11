@@ -5,9 +5,24 @@
       "generator": {
         "type": "realisticterrain:realistic",
         "biome_source": {
-          "type": "realisticterrain:scaled",
+          "type": "realisticterrain:terrain",
           "scale": 1.0,
-          "source": { "type": "minecraft:multi_noise", "preset": "minecraft:overworld" }
+          "fallback": { "type": "minecraft:multi_noise", "preset": "minecraft:overworld" },
+          "settings": {
+            "mountain_height": 1.0,
+            "mountain_frequency": 1.0,
+            "ridge_sharpness": 1.0,
+            "erosion_intensity": 1.0,
+            "river_width": 1.0,
+            "river_frequency": 1.0,
+            "river_depth": 1.0,
+            "snow_line": 430,
+            "biome_scale": 1.0,
+            "sea_level": 96,
+            "roughness": 1.0,
+            "vegetation_density": 1.0,
+            "seed_salt": 0
+          }
         },
         "settings": {
           "mountain_height": 1.0,
@@ -21,6 +36,7 @@
           "biome_scale": 1.0,
           "sea_level": 96,
           "roughness": 1.0,
+          "vegetation_density": 1.0,
           "seed_salt": 0
         }
       }

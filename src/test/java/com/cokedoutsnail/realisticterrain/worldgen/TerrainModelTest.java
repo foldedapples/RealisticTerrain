@@ -96,8 +96,20 @@ final class TerrainModelTest {
     }
 
     @Test
+    void profilesAndVegetationDefaultAreUsable() {
+        assertEquals(1.0F, TerrainSettings.DEFAULT.vegetationDensity());
+        assertEquals(5, TerrainSettings.PROFILES.size());
+        for (TerrainSettings.Profile p : TerrainSettings.PROFILES) {
+            assertTrue(p.settings().vegetationDensity() >= 0.0F);
+            assertTrue(p.settings().vegetationDensity() <= 3.0F);
+            TerrainModel.Sample s = TerrainModel.sample(42L, 0, 0, p.settings());
+            assertTrue(Double.isFinite(s.height()));
+        }
+    }
+
+    @Test
     void seedSaltChangesTerrain() {
-        TerrainSettings salted = new TerrainSettings(1,1,1,1,1,1,1,430,1,96,1,99L);
+        TerrainSettings salted = new TerrainSettings(1,1,1,1,1,1,1,430,1,96,1,1,99L);
         assertNotEquals(
                 TerrainModel.sample(12L, 800, 1200, TerrainSettings.DEFAULT),
                 TerrainModel.sample(12L, 800, 1200, salted)

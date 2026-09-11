@@ -11,11 +11,13 @@ The generator is intentionally source-first and experimental. Back up worlds bef
 ## Features
 
 - Selectable **Realistic Terrain** preset in Create World.
-- Dedicated customization screen with eleven sliders and a live 64×64 top-down preview.
+- Dedicated customization screen with five world-type profiles (**Continental, Alpine, Archipelago, Rolling Hills, Canyons**), twelve sliders, and a live geological elevation preview with contour lines and a peak/average-height readout.
 - Large-scale continental and mountain masks rather than repeated vanilla-sized hills.
 - Ridged peaks, erosion channels, exposed steep rock, terraced foothills, beaches, and coastal shelves.
 - Warped, connected river fields with configurable width, frequency, and carving depth.
 - Rivers enforce a fall line: corridors only carve where they run downhill inside valleys, so channels meander from headwater to coast, taper out of the high ranges, and never slice through ridgelines - plus basin-only lakes.
+- **Terrain-aware biomes**: a custom biome source picks vanilla biomes from the same height/moisture/temperature model that builds the terrain, so forests, deserts, tundra and alpine meadows sit on the actual mountains, rivers and valleys instead of vanilla multi-noise zones.
+- **Terrain-aware vegetation**: extra trees are placed from the terrain model (denser forests in wet lowlands, spruce/climbers at altitude, none in deserts, rivers, lakes or on steep slopes), scaled by the Vegetation density slider.
 - Biome-coordinate scaling and biome-aware surface temperature/precipitation.
 - Soft snow-line probability instead of a hard horizontal cutoff.
 - Mountain caves generated without a custom chunk format.

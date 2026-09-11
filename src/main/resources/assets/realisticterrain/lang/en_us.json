@@ -1,7 +1,12 @@
 {
   "generator.realisticterrain.realistic": "Realistic Terrain",
   "realisticterrain.customize.title": "Realistic Terrain Settings",
-  "realisticterrain.customize.preview": "Live terrain preview",
+  "realisticterrain.customize.preview": "Geological preview",
   "realisticterrain.customize.done": "Apply",
-  "realisticterrain.customize.reset": "Reset"
+  "realisticterrain.customize.reset": "Reset",
+  "realisticterrain.profile.continental": "Continental",
+  "realisticterrain.profile.alpine": "Alpine",
+  "realisticterrain.profile.archipelago": "Archipelago",
+  "realisticterrain.profile.rolling": "Rolling Hills",
+  "realisticterrain.profile.canyons": "Canyons"
 }

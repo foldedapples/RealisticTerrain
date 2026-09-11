@@ -4,13 +4,19 @@ import com.mojang.serialization.MapCodec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
 import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
+import net.minecraft.registry.DynamicRegistryManager;
+import net.minecraft.registry.Registry;
+import net.minecraft.registry.RegistryKey;
+import net.minecraft.registry.RegistryKeys;
 import net.minecraft.registry.entry.RegistryEntry;
+import net.minecraft.util.Identifier;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.ChunkPos;
 import net.minecraft.util.Util;
 import net.minecraft.world.ChunkRegion;
 import net.minecraft.world.HeightLimitView;
 import net.minecraft.world.Heightmap;
+import net.minecraft.world.StructureWorldAccess;
 import net.minecraft.world.biome.Biome;
 import net.minecraft.world.biome.source.BiomeSource;
 import net.minecraft.world.biome.source.BiomeAccess;
@@ -19,10 +25,13 @@ import net.minecraft.world.gen.StructureAccessor;
 import net.minecraft.world.gen.chunk.Blender;
 import net.minecraft.world.gen.chunk.ChunkGenerator;
 import net.minecraft.world.gen.chunk.VerticalBlockSample;
+import net.minecraft.world.gen.feature.ConfiguredFeature;
+import net.minecraft.world.gen.feature.PlacedFeature;
 import net.minecraft.world.gen.noise.NoiseConfig;
 import net.minecraft.world.SpawnHelper;
 import net.minecraft.util.math.random.CheckedRandom;
 import net.minecraft.util.math.random.ChunkRandom;
+import net.minecraft.util.math.random.Random;
 
 import java.util.EnumSet;
 import java.util.List;
@@ -36,6 +45,10 @@ public final class RealisticChunkGenerator extends ChunkGenerator {
     ).apply(i, RealisticChunkGenerator::new));
 
     private final TerrainSettings settings;
+    // The terrain seed is derived once from NoiseConfig (deterministic per world) and reused for
+    // both terrain sampling and biome sampling, so chunks and features stay perfectly aligned.
+    private volatile long cachedTerrainSeed = Long.MIN_VALUE;
+
     public RealisticChunkGenerator(BiomeSource biomeSource, TerrainSettings settings){ super(biomeSource); this.settings=settings; }
     public TerrainSettings settings(){ return settings; }
     @Override protected MapCodec<? extends ChunkGenerator> getCodec(){ return CODEC; }
@@ -44,13 +57,28 @@ public final class RealisticChunkGenerator extends ChunkGenerator {
     @Override public int getWorldHeight(){ return WORLD_HEIGHT; }
 
     private long terrainSeed(NoiseConfig noiseConfig){
-        return noiseConfig.getOrCreateRandomDeriver(com.cokedoutsnail.realisticterrain.RealisticTerrainMod.id("terrain"))
-                .split(0L).nextLong();
+        long s=cachedTerrainSeed;
+        if(s==Long.MIN_VALUE){
+            s=noiseConfig.getOrCreateRandomDeriver(com.cokedoutsnail.realisticterrain.RealisticTerrainMod.id("terrain"))
+                    .split(0L).nextLong();
+            cachedTerrainSeed=s;
+        }
+        return s;
+    }
+
+    /** Cached terrain seed for paths without a NoiseConfig (feature generation); set by populateNoise. */
+    private long terrainSeedValue(){
+        long s=cachedTerrainSeed;
+        return s==Long.MIN_VALUE ? 0L : s;
     }
 
     @Override public CompletableFuture<Chunk> populateNoise(Blender blender, NoiseConfig noiseConfig, StructureAccessor structures, Chunk chunk){
         return CompletableFuture.supplyAsync(() -> {
-            ChunkPos cp=chunk.getPos(); BlockPos.Mutable p=new BlockPos.Mutable(); long seed=terrainSeed(noiseConfig);
+            long seed=terrainSeed(noiseConfig);
+            // The terrain-aware biome source must sample the terrain with the same seed the
+            // terrain itself uses, otherwise biomes would drift away from the real landscape.
+            if(getBiomeSource() instanceof TerrainBiomeSource tbs) tbs.setTerrainSeed(seed);
+            ChunkPos cp=chunk.getPos(); BlockPos.Mutable p=new BlockPos.Mutable();
             for(int lx=0;lx<16;lx++) for(int lz=0;lz<16;lz++){
                 int x=cp.getStartX()+lx,z=cp.getStartZ()+lz;
                 TerrainModel.Sample sm=TerrainModel.sample(seed,x,z,settings);
@@ -112,6 +140,53 @@ public final class RealisticChunkGenerator extends ChunkGenerator {
         ChunkRandom random = new ChunkRandom(new CheckedRandom(region.getSeed()));
         random.setPopulationSeed(region.getSeed(), chunkPos.getStartX(), chunkPos.getStartZ());
         SpawnHelper.populateEntities(region, biome, chunkPos, random);
+    }
+
+    /**
+     * Vanilla biome decorations first, then extra terrain-aware trees so the vegetation density
+     * slider actually does something. Trees are placed straight from configured features (bypassing
+     * placement modifiers, which are biome-gated and would block extras outside their biome list).
+     */
+    @Override public void generateFeatures(StructureWorldAccess world, Chunk chunk, StructureAccessor structureAccessor){
+        super.generateFeatures(world, chunk, structureAccessor);
+        if(settings.vegetationDensity() <= 0.02f) return;
+        long seed=terrainSeedValue();
+        // Fallback before any noise chunk ran; still deterministic per world.
+        if(seed==0L) seed=world.getSeed() ^ 0x5245414C49535449L;
+        ChunkPos cp=chunk.getPos();
+        Random random=Random.create(world.getSeed() ^ (cp.x*0x9E3779B97F4A7C15L) ^ (cp.z*0xC2B2AE3D27D4EB4FL) ^ 0x5245414CL);
+        DynamicRegistryManager registries=world.getRegistryManager();
+        Registry<ConfiguredFeature<?, ?>> configured=registries.getOrThrow(RegistryKeys.CONFIGURED_FEATURE);
+        for(int lx=0;lx<16;lx+=4) for(int lz=0;lz<16;lz+=4){
+            int x=cp.getStartX()+lx, z=cp.getStartZ()+lz;
+            TerrainModel.Sample sm=TerrainModel.sample(seed,x,z,settings);
+            Identifier species=treeSpecies(sm,settings);
+            if(species==null) continue;
+            if(random.nextFloat() > settings.vegetationDensity()*0.16f) continue;
+            int y=chunk.sampleHeightmap(Heightmap.Type.WORLD_SURFACE_WG,lx,lz)+1;
+            configured.getOptionalValue(RegistryKey.of(RegistryKeys.CONFIGURED_FEATURE, species)).ifPresent(f ->
+                    f.generate(world, this, random, new BlockPos(x, y, z)));
+        }
+    }
+
+    /** Chooses a vanilla tree placed-feature id (or null for no tree) from the terrain model climate. */
+    private static Identifier treeSpecies(TerrainModel.Sample sm,TerrainSettings s){
+        double h=sm.height(), w=sm.waterLevel();
+        if(h<w+2) return null;                            // below the waterline
+        if(sm.river()>0.2 || sm.lake()>0.2) return null;  // in a channel or lake
+        if(sm.slopeHint()>0.5) return null;               // too steep to hold a tree
+        if(h>s.snowLine()+40) return null;                // above the tree line
+        double m=sm.moisture(), t=sm.temperature();
+        if(t<-.2){
+            if(m<-.1) return null;
+            return Identifier.ofVanilla("trees_taiga");
+        }
+        if(t>.35 && m>.1) return Identifier.ofVanilla("trees_sparse_jungle");
+        if(m>.25) return t>.25?Identifier.ofVanilla("trees_birch"):Identifier.ofVanilla("trees_birch_and_oak_leaf_litter");
+        if(m>.12) return Identifier.ofVanilla("trees_birch_and_oak_leaf_litter");
+        if(m<-.15) return null; // desert
+        if(t>.3) return Identifier.ofVanilla("trees_savanna");
+        return Identifier.ofVanilla("trees_plains");
     }
     @Override public void appendDebugHudText(List<String> text,NoiseConfig noiseConfig,BlockPos pos){ TerrainModel.Sample s=TerrainModel.sample(terrainSeed(noiseConfig),pos.getX(),pos.getZ(),settings); text.add(String.format("Realistic Terrain h=%.1f river=%.2f ridge=%.2f",s.height(),s.river(),s.ridge())); }
 }

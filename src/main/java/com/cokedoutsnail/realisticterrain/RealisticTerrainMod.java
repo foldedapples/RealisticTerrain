@@ -15,6 +15,7 @@ public final class RealisticTerrainMod implements ModInitializer {
     public static Identifier id(String path){ return Identifier.of(MOD_ID, path); }
     @Override public void onInitialize() {
         Registry.register(Registries.BIOME_SOURCE, id("scaled"), com.cokedoutsnail.realisticterrain.worldgen.ScaledBiomeSource.CODEC);
+        Registry.register(Registries.BIOME_SOURCE, id("terrain"), com.cokedoutsnail.realisticterrain.worldgen.TerrainBiomeSource.CODEC);
         Registry.register(Registries.CHUNK_GENERATOR, id("realistic"), RealisticChunkGenerator.CODEC);
     }
 }
