@@ -103,12 +103,22 @@ public final class CellularNoise {
     /**
      * One sample of the cellular field.
      *
-     * @param scalar   0..1 plate trait, blended across the 3x3 neighbourhood so it is continuous
-     * @param boundary 0..1 distance from the nearest margin (1 = plate interior, 0 = on a border)
+     * @param scalar     0..1 plate trait, blended across the 3x3 neighbourhood so it is continuous
+     * @param boundary   0..1 distance from the nearest margin (1 = plate interior, 0 = on a border)
+     * @param nearestId  identity of the nearest plate, for its own properties
+     * @param secondId   identity of the plate across the nearest boundary
+     * @param normalX    unit normal of that boundary, pointing from the nearest plate to the second
+     * @param normalZ    unit normal of that boundary, pointing from the nearest plate to the second
+     * @param clarity    0..1 how cleanly this is a two-plate boundary; falls to 0 at a triple junction
      */
     public record Cell(
             double scalar,
-            double boundary
+            double boundary,
+            long nearestId,
+            long secondId,
+            double normalX,
+            double normalZ,
+            double clarity
     ) {}
 
     public static Cell sample(double x, double z, long seed) {
@@ -118,7 +128,9 @@ public final class CellularNoise {
     public static Cell sample(double x, double z, long seed, DistanceFunction shape) {
         int xi = (int) Math.floor(x), zi = (int) Math.floor(z);
         double fx = x - xi, fz = z - zi;
-        double bestD = Double.POSITIVE_INFINITY, secondD = Double.POSITIVE_INFINITY;
+        double bestD = Double.POSITIVE_INFINITY, secondD = Double.POSITIVE_INFINITY, thirdD = Double.POSITIVE_INFINITY;
+        long bestId = 0, secondId = 0;
+        double bestX = 0, bestZ = 0, secondX = 0, secondZ = 0;
         double weightSum = 0, traitSum = 0;
         for (int dz = -1; dz <= 1; dz++) {
             for (int dx = -1; dx <= 1; dx++) {
@@ -132,11 +144,19 @@ public final class CellularNoise {
                 double ddx = (dx + ox) - fx, ddz = (dz + oz) - fz;
                 double d = shape.apply(ddx, ddz);
                 long id = mix(h ^ 0x123456789ABCDEFL);
+                // Insertion into the three nearest slots. The vector between the two closest seeds is
+                // what gives the boundary normal below: the perpendicular bisector of that segment *is*
+                // the Voronoi edge, so the normal is exact for the Euclidean metric and a faithful
+                // approximation for the others.
                 if (d < bestD) {
-                    secondD = bestD;
-                    bestD = d;
+                    thirdD = secondD;
+                    secondD = bestD; secondId = bestId; secondX = bestX; secondZ = bestZ;
+                    bestD = d; bestId = id; bestX = ddx; bestZ = ddz;
                 } else if (d < secondD) {
-                    secondD = d;
+                    thirdD = secondD;
+                    secondD = d; secondId = id; secondX = ddx; secondZ = ddz;
+                } else if (d < thirdD) {
+                    thirdD = d;
                 }
                 // Smooth radial blend over the whole 3x3 neighbourhood. Every term is a continuous
                 // function of position, so the trait cannot jump anywhere - not on a plate border,
@@ -151,6 +171,15 @@ public final class CellularNoise {
         double boundary = (secondD - bestD) / (secondD + 1e-12);
         boundary = Math.min(1.0, boundary * EDGE_WIDTH);
 
+        // How distinct the second-nearest plate is from the third. At a triple junction the two are
+        // equally close and this falls to zero, which is exactly where the nearest/second PAIR - and so
+        // the boundary normal, and the velocity-based classification built on top of it - would
+        // otherwise change discontinuously. Callers fade the physics out by this factor.
+        double clarity = clamp((thirdD - secondD) / (0.25 * (secondD + 1e-9)));
+
+        double normalX = secondX - bestX, normalZ = secondZ - bestZ;
+        double normalLength = Math.sqrt(normalX * normalX + normalZ * normalZ);
+
         // Plate trait: a smooth radial average of every neighbouring plate's own value, weighted
         // 1/(1 + k·d). A raw nearest-node value is a step function across every margin - a few
         // hundred blocks of orogeny amplitude inside one cache cell - and merely blending the two
@@ -160,7 +189,10 @@ public final class CellularNoise {
         // across its interior.
         double trait = traitSum / weightSum;
 
-        return new Cell(trait, boundary);
+        return new Cell(trait, boundary, bestId, secondId,
+                normalLength > 1e-9 ? normalX / normalLength : 0.0,
+                normalLength > 1e-9 ? normalZ / normalLength : 0.0,
+                clarity);
     }
 
     public static double clamp(double v) {

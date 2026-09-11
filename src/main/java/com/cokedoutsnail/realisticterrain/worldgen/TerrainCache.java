@@ -47,7 +47,11 @@ public final class TerrainCache {
             double divergent,  //  0..1  separating margins (rift/trench mask)
             double macro,      // -1..1  broad regional crustal highs
             double belt,       //  0..1  deformed fold fabric (coarse ridged field)
-            double fault       //  0..1  proximity to any active margin
+            double fault,      //  0..1  proximity to any active margin
+            double transform,  //  0..1  strike-slip share of the nearest margin
+            double oceanic,    //  0..1  how oceanic the nearest margin is (0 continental, 1 oceanic)
+            double rise,       // -130..120 blocks of regional crustal bias from the two plates
+            double resistance  //  0..1  erosion resistance of the crust at this margin
     ) {}
 
     private TerrainCache() {}
@@ -120,7 +124,11 @@ public final class TerrainCache {
                 bl(n00.divergent(), n10.divergent(), n01.divergent(), n11.divergent(), sx, sz),
                 bl(n00.macro(), n10.macro(), n01.macro(), n11.macro(), sx, sz),
                 bl(n00.belt(), n10.belt(), n01.belt(), n11.belt(), sx, sz),
-                bl(n00.fault(), n10.fault(), n01.fault(), n11.fault(), sx, sz));
+                bl(n00.fault(), n10.fault(), n01.fault(), n11.fault(), sx, sz),
+                bl(n00.transform(), n10.transform(), n01.transform(), n11.transform(), sx, sz),
+                bl(n00.oceanic(), n10.oceanic(), n01.oceanic(), n11.oceanic(), sx, sz),
+                bl(n00.rise(), n10.rise(), n01.rise(), n11.rise(), sx, sz),
+                bl(n00.resistance(), n10.resistance(), n01.resistance(), n11.resistance(), sx, sz));
     }
 
     /** Quintic S-curve: 0 at t=0, 1 at t=1, with zero first and second derivatives at both ends. */
@@ -202,16 +210,46 @@ public final class TerrainCache {
         // margin's strength, because orogeny is linear in this. The narrow threshold band below
         // keeps the decision essentially binary - full amplitude one way or the other - while the
         // field it reads is smooth.
+        // --- plate physics: what the two plates meeting here actually are, and what their relative
+        // motion does across the boundary. This replaces the old single "plate trait" decision with the
+        // standard plate-boundary classification: the component of the RELATIVE velocity along the
+        // boundary normal separates convergence from divergence, and the component along the boundary
+        // itself decides whether the margin is a strike-slip (transform) fault.
+        PlateTectonics.Plate here = PlateTectonics.plate(plate.nearestId());
+        PlateTectonics.Plate there = PlateTectonics.plate(plate.secondId());
+        PlateTectonics.Boundary physics = PlateTectonics.classify(here, there, plate.normalX(), plate.normalZ());
+        double clarity = plate.clarity();
+        double oceanicPhysics = PlateTectonics.oceanicFraction(here, there);
+
+        // The classification is read from the nearest/second plate PAIR, and that pair swaps
+        // discontinuously at a triple junction. So it is faded into the smooth world-space sense field
+        // by `clarity`: the physics dominates along a clean two-plate boundary and the smooth field
+        // takes over exactly where the pair is ambiguous. Without that fade a 560-block orogeny
+        // amplitude would step at every triple junction - the cliff the sense field was introduced to
+        // avoid in the first place.
         double sense = Noise2D.fbm(x / MARGIN_SENSE_SCALE, z / MARGIN_SENSE_SCALE, seed + 53, 3, 2.0, .5);
-        double collisionAffinity = sstep(clamp(sense / MARGIN_SENSE_BAND + 0.5));
-        double convergent = collisionAffinity * margin;
-        double divergent = (1.0 - collisionAffinity) * margin;
+        double senseConvergent = sstep(clamp(sense / MARGIN_SENSE_BAND + 0.5));
+        double convergent = margin * lerp(senseConvergent, physics.convergent(), clarity);
+        double divergent = margin * lerp(1.0 - senseConvergent, physics.divergent(), clarity);
+        double transform = margin * physics.transform() * clarity;
+        // Crust type is a property of the pair too, so it gets the same treatment: the old
+        // continentalness proxy is the fallback where the pair is ambiguous.
+        double oceanic = lerp(clamp(-continent), oceanicPhysics, clarity);
+        // Regional crustal bias and erosion resistance are pair properties too, so they get the same
+        // fade; the neutral fallbacks keep them from stepping where the pair is ambiguous. rise is
+        // clamped so the step across a plate boundary stays an escarpment, not a cliff that would
+        // stand in the middle of a river channel.
+        double rise = Math.max(-45.0, Math.min(45.0, 0.5 * (here.baseElevation() + there.baseElevation()) * clarity));
+        double resistance = lerp(0.65, 0.5 * (here.resistance() + there.resistance()), clarity);
         double macro = Noise2D.fbm(x / (1350.0 / s.mountainFrequency()), z / (1350.0 / s.mountainFrequency()), seed + 29, 4, 2.03, .48);
         double belt = Math.max(0.0, Noise2D.ridged(x / (940.0 / s.mountainFrequency()), z / (940.0 / s.mountainFrequency()), seed + 41, 5));
-        double fault = clamp(convergent + divergent);
+        // A transform margin is an active fault zone, so it counts towards the fault mask the surface
+        // rules read for igneous intrusions and gouge.
+        double fault = clamp(convergent + divergent + transform);
         // The warp stays local to this method: it exists to deform the plate lookup, and exposing it on
         // the interpolated node only cost two bilinear blends per sample for a value nothing read.
-        return new Node(continent, plate.scalar(), clamp(convergent), clamp(divergent), macro, belt, clamp(fault));
+        return new Node(continent, plate.scalar(), clamp(convergent), clamp(divergent), macro, belt,
+                clamp(fault), clamp(transform), clamp(oceanic), rise, clamp(resistance));
     }
 
     private static double clamp(double v) {

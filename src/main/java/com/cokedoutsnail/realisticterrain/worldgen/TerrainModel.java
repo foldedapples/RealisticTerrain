@@ -158,16 +158,44 @@ public final class TerrainModel {
         // tectonic_activity scales everything the margins do - uplift, trenching and rifting alike - so
         // it is the single knob for "how active is this world's tectonics".
         double activity = s.tectonicActivity();
-        double range = orogeny * collisionMask * 560.0 * s.mountainHeight() * activity;
+        // Continental convergence folds a range; a margin where BOTH plates are oceanic builds an island
+        // arc instead, so the fold amplitude drops away there. A mixed margin is a subduction zone, not
+        // an arc, and it gets the coastal cordillera below rather than a damper - which is why this
+        // keys off `2 * oceanic - 1` rather than `oceanic`.
+        double arcOnly = Math.max(0.0, 2.0 * c.oceanic() - 1.0);
+        // Resistant (old, cool) crust holds more pronounced relief than young crust that has been worn
+        // down. Centred so the modulation is exactly 1 at the average resistance, which is what keeps
+        // the reference amplitudes - and therefore the peak-height invariant - unchanged.
+        double reliefGain = 1.0 + 0.5 * (0.65 - c.resistance());
+        double range = orogeny * collisionMask * 560.0 * s.mountainHeight() * activity
+                * (1.0 - 0.6 * arcOnly) * reliefGain;
         // Divergent margins: ocean trenches below sea level, continental rifts carved into valleys.
-        double trench = clamp(-continent) * c.divergent() * 95.0 * s.riverDepth() * activity;
+        double trench = c.oceanic() * c.divergent() * 95.0 * s.riverDepth() * activity;
         double continentalRift = clamp(continent) * c.divergent() * 60.0 * Math.max(1.0, s.canyonDepth())
                 * (0.6 + 0.4 * c.fault()) * activity;
+        // A continental/oceanic collision is a subduction zone: the overriding plate's edge buckles up
+        // into a coastal cordillera while the ocean floor drops into a trench in front of it. The
+        // c.oceanic() * (1 - c.oceanic()) factor peaks at a mixed margin and vanishes for pure
+        // continental or pure oceanic pairs, which is exactly where a cordillera belongs.
+        double coastalUplift = c.convergent() * c.oceanic() * (1.0 - c.oceanic()) * 3.0
+                * 70.0 * s.mountainHeight() * activity;
+        // Transform margins neither build ranges nor open trenches: they shear the crust, which reads as
+        // a corridor of linear, offset ridges and valleys. Positive where the fold fabric is already
+        // high and negative where it is low, so the corridor keeps the surrounding grain instead of
+        // becoming a flat scar.
+        double shearCorridor = c.transform() * (c.belt() * 2.0 - 1.0) * 50.0 * s.mountainHeight() * activity;
         // Broad macro highs and soft foothill aprons around the ranges. mountain_uplift scales these,
         // which is what makes a range a massif rather than a ridge: it lifts the whole shoulder.
         double foothills = clamp((c.macro() - 0.02) / 0.60) * (1.0 - collisionMask);
         double uplift = (c.macro() * 40.0 + foothills * 95.0 * s.mountainHeight()) * s.mountainUplift();
-        double h = craton + oceanBasin + uplift + range - trench - continentalRift;
+        // The plates' own crustal bias finally reaches the surface here. `rise` is the average base
+        // elevation of the two plates meeting at this column, faded out at triple junctions exactly as
+        // the boundary classification is, so a cratonic shield stands a little proud of its neighbours
+        // and dense old oceanic crust rides lower. Erosion resistance acts on the fold amplitude above
+        // rather than on the channel incision, because a per-column multiplier on the carve would vary
+        // across a channel's own cross-section and break the shoreline's single-contour property.
+        double h = craton + oceanBasin + uplift + range - trench - continentalRift + coastalUplift
+                + shearCorridor + c.rise();
         return clamp(h, MIN_SURFACE, maxSurface(s));
     }
 
