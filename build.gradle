@@ -14,13 +14,25 @@ def useAi = useCuda || useDml || useCpu
 
 println "Build variant: ${useCuda ? 'CUDA' : useDml ? 'DirectML (Windows)' : useCpu ? 'CPU' : 'No AI (Geological only)'}"
 
+def onnxRuntimeVersion = '1.20.0'
+// Microsoft DirectML is *not* published to Maven Central (only `onnxruntime` and `onnxruntime_gpu`
+// are). The reference integration (xandergos/terrain-diffusion-mc) ships a locally built
+// libs/onnxruntime-dml.jar. We reproduce that jar here from the version-matched Maven Central Java
+// bindings plus the pinned NuGet DirectML native runtime, so `-PuseDml=true` builds without requiring
+// a Visual Studio / Windows SDK toolchain while still keeping the DirectML native library separate
+// from the CUDA and CPU builds.
+def directMlNugetVersion = onnxRuntimeVersion
+def directMlNupkgSha256 = 'e9e341daf6157f5e89413d9ad457e576b80832788916863c6427566c45f0dec9'
+def directMlNupkgUrl = "https://api.nuget.org/v3-flatcontainer/microsoft.ml.onnxruntime.directml/${directMlNugetVersion}/microsoft.ml.onnxruntime.directml.${directMlNugetVersion}.nupkg"
+
 def modelRepositorySlug = 'xandergos/terrain-diffusion-30m-onnx'
 def modelRepositoryRevision = 'ad2df557eca5645f588766101cf3bc3682455c3e'
 def generatedManifestDirectory = layout.buildDirectory.dir('generated/model-assets').get().asFile
 def generatedManifestFile = new File(generatedManifestDirectory, 'model-assets-manifest.json')
 
-def buildVariant = useCuda ? 'cuda' : useDml ? 'windows' : useCpu ? 'cpu' : 'geo'
-version = useAi ? "${project.mod_version}-${buildVariant}+${project.minecraft_version}" : project.mod_version
+// Self-describing artifact names: realistic-terrain-<mod_version>-<variant>.jar
+def buildVariant = useCuda ? 'cuda' : useDml ? 'dml' : useCpu ? 'cpu-ai' : 'geo'
+version = "${project.mod_version}-${buildVariant}"
 group = project.maven_group
 
 base { archivesName = project.archives_base_name }
@@ -41,6 +53,11 @@ repositories {
     flatDir { dirs 'libs' }
 }
 
+// Base Maven Central ONNX Runtime Java bindings, used only to assemble the DirectML jar.
+configurations {
+    onnxRuntimeBase
+}
+
 dependencies {
     minecraft "com.mojang:minecraft:${project.minecraft_version}"
     mappings "net.fabricmc:yarn:${project.yarn_mappings}:v2"
@@ -48,15 +65,23 @@ dependencies {
     modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
 
     if (useCuda) {
-        implementation "com.microsoft.onnxruntime:onnxruntime_gpu:1.20.0"
-        include "com.microsoft.onnxruntime:onnxruntime_gpu:1.20.0"
+        implementation "com.microsoft.onnxruntime:onnxruntime_gpu:${onnxRuntimeVersion}"
+        include "com.microsoft.onnxruntime:onnxruntime_gpu:${onnxRuntimeVersion}"
     } else if (useCpu) {
-        implementation "com.microsoft.onnxruntime:onnxruntime:1.20.0"
-        include "com.microsoft.onnxruntime:onnxruntime:1.20.0"
+        implementation "com.microsoft.onnxruntime:onnxruntime:${onnxRuntimeVersion}"
+        include "com.microsoft.onnxruntime:onnxruntime:${onnxRuntimeVersion}"
     } else if (useDml) {
-        implementation 'com.microsoft.onnxruntime:onnxruntime-dml:1.0'
-        include 'com.microsoft.onnxruntime:onnxruntime-dml:1.0'
+        // Assembled by prepareDirectMlRuntime into libs/ and nested via Loom's `include`. It is
+        // deliberately *not* on the compile classpath: the Java source only reaches ONNX through
+        // reflection (see OnnxModel), and putting it there makes every compile task consume
+        // prepareDirectMlRuntime's output, which Gradle rejects as an implicit dependency. It is
+        // declared as a normal module rather than a raw file so Loom can nest it - a bare file has
+        // no artifact capabilities.
+        include "com.microsoft.onnxruntime:onnxruntime-dml:${onnxRuntimeVersion}"
     }
+
+    // Only used to build the DirectML jar in prepareDirectMlRuntime; never on the compile classpath.
+    onnxRuntimeBase "com.microsoft.onnxruntime:onnxruntime:${onnxRuntimeVersion}"
 
     implementation 'com.google.code.gson:gson:2.11.0'
     include 'com.google.code.gson:gson:2.11.0'
@@ -67,10 +92,11 @@ dependencies {
 }
 
 processResources {
+    // build-variant.properties identifies the shipped backend at runtime (geo/dml/cuda/cpu-ai).
+    filesMatching("build-variant.properties") { expand "build_variant": buildVariant }
     if (useAi) {
         dependsOn 'generateModelAssetManifest'
         from(generatedManifestFile) { into '' }
-        filesMatching("build-variant.properties") { expand "build_variant": buildVariant }
     }
     inputs.property "version", project.version
     inputs.property "minecraft_version", project.minecraft_version
@@ -98,6 +124,13 @@ java {
 test {
     useJUnitPlatform()
     maxHeapSize = '2g'
+    // `-Drealisticterrain.diagnostics=true` on the Gradle command line lands on the Gradle daemon,
+    // not on the forked test JVM, so the documented `./gradlew test --tests '*TerrainDiagnostics*'
+    // -Drealisticterrain.diagnostics=true` command silently skipped the very test it named.
+    // Forward the properties the tests read into the forked JVM explicitly.
+    ['realisticterrain.diagnostics'].each { key ->
+        systemProperty key, System.getProperty(key, 'false')
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -161,19 +194,153 @@ tasks.register('generateModelAssetManifest') {
 }
 
 // ---------------------------------------------------------------------------
+// DirectML runtime assembly (Windows)
+//
+// Maven Central publishes only `onnxruntime` (CPU) and `onnxruntime_gpu` (CUDA). DirectML ships as a
+// NuGet native runtime, and the reference integration (xandergos/terrain-diffusion-mc) expects a
+// locally built `libs/onnxruntime-dml.jar`. This task reproduces that jar from the version-matched
+// Maven Central Java bindings plus the pinned, SHA-256-verified DirectML native `onnxruntime.dll`,
+// so `-PuseDml=true` no longer fails on an unresolvable `onnxruntime-dml:1.0` coordinate.
+// ---------------------------------------------------------------------------
+def prepareDirectMlRuntime = tasks.register('prepareDirectMlRuntime') {
+    group = 'build setup'
+    description = 'Assembles libs/onnxruntime-dml.jar (Maven ONNX Runtime Java bindings + pinned DirectML native runtime).'
+    def outFile = file("libs/onnxruntime-dml-${onnxRuntimeVersion}.jar")
+    outputs.file(outFile)
+    inputs.property('onnxRuntimeVersion', onnxRuntimeVersion)
+    inputs.property('directMlNupkgSha256', directMlNupkgSha256)
+    inputs.property('directMlNupkgUrl', directMlNupkgUrl)
+
+    doLast {
+        file('libs').mkdirs()
+        // Cache the download outside build/ so a `clean` does not force a fresh 15 MB fetch.
+        def cacheDir = new File(gradle.gradleUserHomeDir, 'realisticterrain/directml')
+        cacheDir.mkdirs()
+        def work = new File(temporaryDir, 'directml')
+        work.mkdirs()
+
+        // 1. Download and verify the pinned DirectML NuGet package.
+        def nupkg = new File(cacheDir, 'onnxruntime-directml.nupkg')
+        if (!nupkg.exists() || sha256Hex(nupkg.bytes) != directMlNupkgSha256) {
+            logger.lifecycle("Downloading DirectML runtime (${onnxRuntimeVersion}) from ${directMlNupkgUrl}")
+            nupkg.delete()
+            new URL(directMlNupkgUrl).withInputStream { input ->
+                nupkg.withOutputStream { out -> out << input }
+            }
+        }
+        def actualSha = sha256Hex(nupkg.bytes)
+        if (actualSha != directMlNupkgSha256) {
+            throw new GradleException("DirectML package SHA-256 mismatch: expected ${directMlNupkgSha256} but got ${actualSha}")
+        }
+
+        // 2. Read the win-x64 DirectML native onnxruntime.dll out of the nupkg.
+        def dmlDllBytes
+        def zip = new java.util.zip.ZipFile(nupkg)
+        try {
+            def entry = zip.getEntry('runtimes/win-x64/native/onnxruntime.dll')
+            if (entry == null) {
+                throw new GradleException('runtimes/win-x64/native/onnxruntime.dll not found in the DirectML package')
+            }
+            dmlDllBytes = zip.getInputStream(entry).bytes
+        } finally {
+            zip.close()
+        }
+
+        // 3. Resolve the Maven Central Java bindings jar and pick the native slot to replace.
+        def baseJar = configurations.onnxRuntimeBase.singleFile
+        def nativeRoot = 'ai/onnxruntime/native/'
+        def winPrefix = nativeRoot + 'win-x64/'
+        def nativePath = winPrefix + 'onnxruntime.dll'
+        def jniPath = winPrefix + 'onnxruntime4j_jni.dll'
+
+        // 4. Copy the base jar, keeping only what the DirectML Windows backend needs:
+        //    - the Java classes,
+        //    - the version-matched, backend-agnostic JNI bridge (onnxruntime4j_jni.dll),
+        //    - the DirectML onnxruntime.dll substituted in place of the CPU build.
+        //    Everything else is dropped: other platforms' binaries are unusable from a DirectML build,
+        //    and the 300 MB of .pdb debug symbols are not loaded at runtime. Shipping them would put
+        //    an incompatible CPU onnxruntime.dll next to the DirectML one in the same jar.
+        def sawJni = false
+        def tmpOut = new File(work, 'onnxruntime-dml.jar')
+        tmpOut.delete()
+        def out = new java.util.zip.ZipOutputStream(new BufferedOutputStream(tmpOut.newOutputStream()))
+        try {
+            def source = new java.util.zip.ZipFile(baseJar)
+            try {
+                def entries = source.entries()
+                while (entries.hasMoreElements()) {
+                    def entry = entries.nextElement()
+                    def name = entry.getName()
+                    if (entry.isDirectory()) {
+                        continue
+                    }
+                    if (name.startsWith(nativeRoot)) {
+                        if (!name.startsWith(winPrefix) || name.endsWith('.pdb') || name == nativePath) {
+                            continue
+                        }
+                        if (name == jniPath) {
+                            sawJni = true
+                        }
+                    }
+                    def newEntry = new java.util.zip.ZipEntry(name)
+                    newEntry.time = entry.time
+                    out.putNextEntry(newEntry)
+                    out.write(source.getInputStream(entry).bytes)
+                    out.closeEntry()
+                }
+            } finally {
+                source.close()
+            }
+            if (!sawJni) {
+                throw new GradleException("${jniPath} not found in ${baseJar.name}; the DirectML jar would have no JNI bridge")
+            }
+            def dmlEntry = new java.util.zip.ZipEntry(nativePath)
+            out.putNextEntry(dmlEntry)
+            out.write(dmlDllBytes)
+            out.closeEntry()
+        } finally {
+            out.close()
+        }
+        outFile.delete()
+        java.nio.file.Files.move(tmpOut.toPath(), outFile.toPath(),
+                java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+        logger.lifecycle("Wrote ${outFile} (${outFile.length()} bytes)")
+    }
+}
+
+if (useDml) {
+    tasks.named('processIncludeJars') { dependsOn prepareDirectMlRuntime }
+    tasks.named('jar') { dependsOn prepareDirectMlRuntime }
+}
+
+// ---------------------------------------------------------------------------
 // Build variant tasks
+//
+// These must delegate to a *separate* Gradle invocation, because Gradle cannot change the values of
+// `useCuda` / `useDml` / `useCpu` within a running build - the dependencies, the artifact version and
+// the `include` configuration are all decided at configuration time.
+//
+// Note the extra '--no-daemon' and the '-x test': a nested build inherits the outer build's project
+// lock, so the inner build must not try to fork its own daemon or run the test task. Without those,
+// `gradlew buildDml` reaches `:test` and then waits forever on a lock the outside build is still
+// holding. Tests still run for `gradlew test build -PuseDml=true`, which is the documented path.
 // ---------------------------------------------------------------------------
 def isWindows = System.getProperty('os.name').toLowerCase().contains('win')
 def gradlewExecutable = rootProject.file(isWindows ? 'gradlew.bat' : 'gradlew').absolutePath
 
 ['Cuda', 'Dml', 'Cpu'].each { variant ->
     tasks.register("build${variant}", Exec) {
+        group = 'build'
+        description = "Builds the ${variant.toLowerCase()} variant in a nested Gradle invocation."
         workingDir rootProject.projectDir
-        commandLine gradlewExecutable, 'build', "-Puse${variant}=true"
+        commandLine gradlewExecutable, 'build', '-x', 'test', '--no-daemon',
+                "--console=plain", "-Puse${variant}=true"
     }
 }
 
 tasks.register('buildAll') {
+    group = 'build'
+    description = 'Builds the CUDA, DirectML and CPU variants.'
     dependsOn 'buildCuda', 'buildDml', 'buildCpu'
 }
 
