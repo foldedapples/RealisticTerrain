@@ -73,7 +73,35 @@ Requirements: JDK 21 and an internet connection for the first dependency downloa
 ./gradlew build
 ```
 
-The distributable jar is created in `build/libs/`.
+The distributable jar is created in `build/libs/`. On Windows, `.\run-gradle.ps1 <tasks...>` wraps
+`gradlew` and writes a readable UTF-8 log to `gradle-run.log`; Gradle's own output is otherwise mangled
+by Windows PowerShell 5.1's UTF-16 redirection.
+
+### Backends
+
+The terrain engine ships in four flavours. Exactly one flag is used per build, and each flavour
+writes a distinctly named artifact so two builds can never be confused for one another:
+
+| Command | Backend | Artifact |
+| --- | --- | --- |
+| `./gradlew build` | Geological only — no ONNX Runtime is bundled at all | `realistic-terrain-<version>-geo.jar` |
+| `./gradlew build -PuseDml=true` | DirectML (Windows) | `realistic-terrain-<version>-dml.jar` |
+| `./gradlew build -PuseCuda=true` | CUDA | `realistic-terrain-<version>-cuda.jar` |
+| `./gradlew build -PuseCpu=true` | CPU | `realistic-terrain-<version>-cpu-ai.jar` |
+
+The AI flavours nest ONNX Runtime inside the mod jar under `META-INF/jars/` through Loom's `include`,
+so there is nothing to install alongside the mod. The Java source never references ONNX types
+directly - `OnnxModel` reaches them by reflection and degrades to "Runtime not available" - which is
+why the geological build can carry no runtime at all.
+
+Maven Central publishes only `onnxruntime` (CPU) and `onnxruntime_gpu` (CUDA). DirectML is distributed
+as a NuGet *native* runtime, so `prepareDirectMlRuntime` assembles the missing Java artifact itself:
+it takes the version-matched Maven Central Java bindings and swaps in the pinned, SHA-256-verified
+DirectML `onnxruntime.dll`, keeping the backend-agnostic JNI bridge and dropping the other platforms'
+binaries and debug symbols. That means `-PuseDml=true` needs **no** Visual Studio / Windows SDK
+toolchain, and the result is a ~5 MB nested jar rather than ~96 MB. The package is downloaded once into
+the Gradle user home and reused; `build-variant.properties` inside the jar records which backend was
+shipped.
 
 `build` also runs `validateModMetadata`, which parses every resource JSON file and
 enforces the parts of the Fabric metadata spec that make the loader reject a mod
