@@ -58,7 +58,9 @@ public record TerrainSample(
         return lakeStrength > 0.3;
     }
 
-    @SuppressWarnings({"unchecked", "null"})
+    // The "unchecked" component formerly here was redundant (Eclipse flags it as unnecessary); the
+    // record builder's unannotated generics only raise a null-type-safety problem.
+    @SuppressWarnings("null")
     public static final Codec<TerrainSample> CODEC = RecordCodecBuilder.create(i -> i.group(
             Codec.DOUBLE.fieldOf("elevation").forGetter(s -> s.elevation),
             Codec.DOUBLE.fieldOf("water_level").forGetter(s -> s.waterLevel),

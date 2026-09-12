@@ -94,6 +94,10 @@ public final class TerrainSettings {
      * world save has always used, so existing worlds keep loading.
      */
     public static final Codec<TerrainSettings> CODEC = new Codec<>() {
+        // DataFixerUpper ships no null annotations, so Pair.of infers a @NonNull Pair that Eclipse
+        // null analysis reports as an unsafe conversion into this unannotated return type. The whole
+        // method is suppressed because its ops/MapLike helpers are unannotated throughout.
+        @SuppressWarnings("null")
         @Override
         public <T> DataResult<Pair<TerrainSettings, T>> decode(DynamicOps<T> ops, T input) {
             MapLike<T> map = ops.getMap(input).result().orElse(null);
@@ -115,7 +119,6 @@ public final class TerrainSettings {
                 if (coast != null) v[TerrainSetting.COAST_LINE.ordinal()] = TerrainSetting.COAST_LINE.clamp(coast);
                 if (deep != null) v[TerrainSetting.OCEAN_DEPTH.ordinal()] = TerrainSetting.OCEAN_DEPTH.clamp(deep);
             }
-            @SuppressWarnings({"unchecked", "null"})
             Double salt = number(ops, map.get("seed_salt"));
             // Engine selection (default GEOLOGICAL for old worlds missing the field)
             TerrainEngine eng = TerrainEngine.GEOLOGICAL;
