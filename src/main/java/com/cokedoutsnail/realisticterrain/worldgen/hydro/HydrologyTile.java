@@ -43,6 +43,8 @@ public final class HydrologyTile {
     public final int[] receiver;
     public final int[] rank;
     public final int[] popOrder;
+    /** Catchment identity: the grid index of the outlet cell this cell drains to. */
+    public final int[] basinId;
     public final int popCount;
 
     public final float[] river;
@@ -65,8 +67,8 @@ public final class HydrologyTile {
 
     HydrologyTile(HydrologyTileKey key, long seed, float seaLevel, int originCellX, int originCellZ,
             float[] elevation, float[] filled, double[] accumulation, int[] strahler, int[] receiver,
-            int[] rank, int[] popOrder, int popCount, RiverNetwork.Shaped shaped, float[] distance,
-            int channelCells, int lakeCells, int outletCells) {
+            int[] rank, int[] popOrder, int[] basinId, int popCount, RiverNetwork.Shaped shaped,
+            float[] distance, int channelCells, int lakeCells, int outletCells) {
         this.key = key;
         this.seed = seed;
         this.seaLevel = seaLevel;
@@ -79,6 +81,7 @@ public final class HydrologyTile {
         this.receiver = receiver;
         this.rank = rank;
         this.popOrder = popOrder;
+        this.basinId = basinId;
         this.popCount = popCount;
         this.river = shaped.river;
         this.lake = shaped.lake;
@@ -122,7 +125,7 @@ public final class HydrologyTile {
         int n = GRID * GRID;
         long floats = (long) n * 4 * 14;
         long doubles = (long) n * 8;
-        long ints = (long) n * 4 * 4;
+        long ints = (long) n * 4 * 5;
         return floats + doubles + ints;
     }
 
@@ -158,6 +161,16 @@ public final class HydrologyTile {
         int[] receiver = new int[n];
         FlowDirection.receivers(GRID, flood.rank, flood.popOrder, flood.popCount, flood.outlet, receiver);
 
+        // Catchments: propagate each cell's outlet identity in pop order. Because the pop order is a
+        // valid downstream topological order, a receiver is always already resolved when its cell is
+        // visited, so one linear pass partitions the whole domain into basins.
+        int[] basinId = new int[n];
+        for (int k = 0; k < flood.popCount; k++) {
+            int c = flood.popOrder[k];
+            int r = receiver[c];
+            basinId[c] = r < 0 ? c : basinId[r];
+        }
+
         double[] runoff = cellRunoff(elevation, originCellX, originCellZ, seed);
         FlowAccumulation.Result flow =
                 FlowAccumulation.solve(receiver, flood.popOrder, flood.popCount, runoff);
@@ -177,8 +190,8 @@ public final class HydrologyTile {
         }
 
         return new HydrologyTile(key, seed, sea, originCellX, originCellZ, elevation, flood.filled,
-                flow.accumulation, flow.strahler, receiver, flood.rank, flood.popOrder, flood.popCount,
-                shaped, distance, channelCells, lakeCells, outletCells);
+                flow.accumulation, flow.strahler, receiver, flood.rank, flood.popOrder, basinId,
+                flood.popCount, shaped, distance, channelCells, lakeCells, outletCells);
     }
 
     /**
