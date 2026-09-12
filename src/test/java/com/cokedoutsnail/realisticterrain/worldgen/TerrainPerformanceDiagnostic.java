@@ -1,6 +1,6 @@
 package com.cokedoutsnail.realisticterrain.worldgen;
 
-import com.cokedoutsnail.realisticterrain.worldgen.hydro.Drainage;
+import com.cokedoutsnail.realisticterrain.worldgen.hydro.HydrologyManager;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -22,7 +22,7 @@ final class TerrainPerformanceDiagnostic {
 
         // Cold: fresh caches, so every coarse tile and drainage region has to be built.
         TerrainCache.clear();
-        Drainage.clear();
+        HydrologyManager.clear();
         long t0 = System.nanoTime();
         sweep(s);
         double coldMs = (System.nanoTime() - t0) / 1e6;
@@ -36,7 +36,13 @@ final class TerrainPerformanceDiagnostic {
         System.out.printf("[terrain] cold %.1f ms (%.0f k samples/s), warm %.1f ms (%.0f k samples/s)%n",
                 coldMs, samples / coldMs, warmMs, samples / warmMs);
         System.out.printf("[terrain] covering %d x %d blocks at 1 sample per column%n", SIDE * STEP, SIDE * STEP);
-        System.out.printf("[caches] tectonic nodes=%d, drainage regions=%d%n", TerrainCache.size(), Drainage.size());
+        System.out.printf("[caches] tectonic nodes=%d, hydrology tiles=%d%n", TerrainCache.size(), HydrologyManager.size());
+
+        // The task asks for explicit tile cost and memory numbers.
+        System.out.printf("[hydro] %.1f ms per hydrology tile (%d solved), %.1f MB per tile, %.1f MB cached%n",
+                HydrologyManager.meanSolveMillis(), HydrologyManager.solveCount(),
+                HydrologyManager.estimatedTileBytes() / 1048576.0,
+                HydrologyManager.estimatedCacheBytes() / 1048576.0);
 
         // Cheap, but a genuine sanity bound: a whole column must not take microseconds-times-a-thousand.
         org.junit.jupiter.api.Assertions.assertTrue(coldMs > 0.0 && warmMs > 0.0);
@@ -55,7 +61,7 @@ final class TerrainPerformanceDiagnostic {
     void reportChunkBatch() {
         TerrainSettings s = TerrainSettings.DEFAULT;
         TerrainCache.clear();
-        Drainage.clear();
+        HydrologyManager.clear();
         long t0 = System.nanoTime();
         for (int c = 0; c < AREA; c++) {
             int cx = (c % 16) * 16, cz = (c / 16) * 16;
@@ -68,7 +74,7 @@ final class TerrainPerformanceDiagnostic {
         double ms = (System.nanoTime() - t0) / 1e6;
         double perColumn = ms / (AREA * 256.0);
         System.out.printf("[terrain] %d chunks (cold) in %.0f ms -> %.1f us/column%n", AREA, ms, perColumn * 1000);
-        System.out.printf("[caches] tectonic nodes=%d, drainage regions=%d%n", TerrainCache.size(), Drainage.size());
+        System.out.printf("[caches] tectonic nodes=%d, hydrology tiles=%d%n", TerrainCache.size(), HydrologyManager.size());
         org.junit.jupiter.api.Assertions.assertTrue(perColumn > 0.0);
     }
 }

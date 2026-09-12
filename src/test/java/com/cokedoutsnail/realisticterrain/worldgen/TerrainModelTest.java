@@ -1,6 +1,7 @@
 package com.cokedoutsnail.realisticterrain.worldgen;
 
 import com.cokedoutsnail.realisticterrain.noise.CellularNoise;
+import com.cokedoutsnail.realisticterrain.worldgen.hydro.HydrologyTile;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
@@ -158,6 +159,14 @@ final class TerrainModelTest {
         // each grid is 640×640 blocks and touches ~1600 coarse cells - so the delta is a few thousand
         // nodes at most, still far smaller than the 4096 columns sampled here, and those nodes are
         // shared by every column rather than recomputed per column.
+        // The coarse cache shares nodes across columns, so a fresh patch must touch a number of nodes
+        // bounded by the coarse lattice area it covers - NOT by the 4096 columns sampled. That area
+        // is now dominated by the macro-hydrology tile, which is 2048 blocks per side plus its halo
+        // (see HydrologyTile): any tile of the requested 2048-block size necessarily touches
+        // (2048/16)^2 = 16384 coarse cells on its own, so the bound below is the tile's coarse area
+        // with margin for the erosion region that overlaps the patch.
+        long coarsePerAxis = (HydrologyTile.GRID * (long) HydrologyTile.CELL) / 16L;
+        long bound = coarsePerAxis * coarsePerAxis * 2L;
         long before = TerrainCache.size();
         for (int x = 2000; x < 2064; x++) {
             for (int z = 3000; z < 3064; z++) {
@@ -165,7 +174,18 @@ final class TerrainModelTest {
             }
         }
         long delta = TerrainCache.size() - before;
-        assertTrue(delta < 8192, "Cache should share coarse nodes across columns, delta=" + delta);
+        assertTrue(delta < bound, "Cache should share coarse nodes across columns, delta=" + delta
+                + " bound=" + bound);
+        // The stronger, direct statement of "shared": a second pass over the identical patch must be
+        // pure memoization and add nothing at all, however many columns it walks.
+        long settled = TerrainCache.size();
+        for (int x = 2000; x < 2064; x++) {
+            for (int z = 3000; z < 3064; z++) {
+                TerrainModel.sample(seed, x, z, TerrainSettings.DEFAULT);
+            }
+        }
+        assertEquals(settled, TerrainCache.size(),
+                "re-sampling the same patch rebuilt coarse nodes instead of sharing them");
     }
 
     // ---------------------------------------------------------------------------------------

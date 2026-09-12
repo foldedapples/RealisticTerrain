@@ -1,7 +1,6 @@
 package com.cokedoutsnail.realisticterrain.worldgen;
 
 import com.cokedoutsnail.realisticterrain.noise.Noise2D;
-import com.cokedoutsnail.realisticterrain.worldgen.hydro.Drainage;
 
 /**
  * Shared mathematical terrain model used by both chunk generation and the live preview.
@@ -248,21 +247,16 @@ public final class TerrainModel {
         double ridgeDetail = clamp((Noise2D.fbm(x / 200.0, z / 200.0, seed + 223, 3, 2.15, .5) * roughnessGain + 1.0) * 0.5);
         double ridge = Math.min(1.0, Math.pow(c.belt(), 0.5 + 0.6 * s.ridgeSharpness()) * (0.6 + 0.4 * ridgeDetail));
 
-        // --- drainage network: real flow accumulation, order, basins and wetlands ---
-        // The channel mask is no longer noise. Drainage solves a priority-flood + D8 flow network per
-        // region and hands back discharge, Strahler order and closed-basin depth here. Meander warps
-        // WHERE the network is sampled, never the height the water sits at, so a meander can move a
-        // channel sideways but can never make it run uphill.
-        double meander = s.meanderStrength();
-        double mx = x, mz = z;
-        if (meander > 0.01) {
-            double amp = 55.0 * meander * s.riverWidth();
-            mx = x + Noise2D.fbm(x / 640.0, z / 640.0, seed + 733, 2, 2.3, .5) * amp;
-            mz = z + Noise2D.fbm(x / 640.0, z / 640.0, seed + 739, 2, 2.3, .5) * amp;
-        }
-        Drainage.Cell d = Drainage.sample(mx, mz, seed, s);
-        double discharge = d.discharge();
-        double order = d.order();
+        // --- drainage network: a real connected flow graph solved on macro-hydrology tiles ---
+        // The channel mask is no longer noise, and the sample position is no longer warped. The old
+        // code offset x and z by two independent fBm fields before asking the solver, which slid a
+        // correctly solved channel off its own watershed, broke confluences and let rivers cut
+        // sideways across slopes. Meandering is now applied laterally to the cross-section instead,
+        // so it can move the water's edge without ever moving where the river is.
+        com.cokedoutsnail.realisticterrain.worldgen.hydro.RiverSample rs =
+                com.cokedoutsnail.realisticterrain.worldgen.hydro.HydrologyManager.sample(x, z, seed, s);
+        double discharge = rs.discharge();
+        double order = rs.order();
 
         // --- fluvial canyon dissection of high plateaus ---
         double dissection = Math.max(0.0, Noise2D.ridged(x / 260.0, z / 260.0, seed + 87, 3));
@@ -279,7 +273,7 @@ public final class TerrainModel {
                   + hydro.delta() * s.erosionIntensity();
         // Wetland is soft, saturated ground: it settles very slightly and holds moisture, but it can
         // never LIFT the surface, so it cannot produce water above its own banks.
-        h0 -= d.wetland() * 1.4 * s.wetlandFrequency();
+        h0 -= rs.wetland() * 1.4 * s.wetlandFrequency();
 
         // Width, depth and water level all come from the drainage network instead of from a noise
         // field. Two different quantities are needed, and keeping them apart is what makes the
@@ -296,12 +290,35 @@ public final class TerrainModel {
         // simplest game-ready form - so a trunk river is genuinely wider and deeper than the
         // tributary feeding it, while the sliders set the overall scale rather than the shape.
         double depthScale = 0.5 + 0.5 * s.riverDepth();
-        double size = 0.45 + 0.85 * discharge + 0.30 * order;
-        double channelProfile = clamp((d.river() - 0.16) / 0.74);
+        // `discharge` here is the absolute accumulated runoff, so scale it onto the same 0..1 span
+        // the rest of the channel model uses (TRUNK_AREA is a full-size river).
+        double dischargeNorm = clamp(Math.log1p(Math.max(0.0, discharge) / 26.0)
+                / Math.log1p(900.0 / 26.0));
+        double size = 0.45 + 0.85 * dischargeNorm + 0.30 * order;
+        double dt = Math.max(1.0, rs.width() * 0.5);
+        double across = clamp(rs.distanceToCenter() / dt);
+        double channelProfile = clamp((rs.river() - 0.16) / 0.74);
         double channelPresence = sstep(clamp((channelProfile - 0.30) / 0.20));
-        double riverBed = RIVER_BED_DEPTH * depthScale * size * channelProfile;
+        // The two shape modifiers below are applied to the BED ONLY, never to the water plane. The
+        // water plane is what TerrainModelTest checks for concentric rings, and anything that makes
+        // it vary radially across the channel shows up there as a staircase. Bed-only is also the
+        // physically right place for both: a bank grades up to the floodplain, and a meander scour
+        // deepens the outer bend of the bed.
+        double bankFalloff = across < 1.0 ? (0.30 + 0.70 * sstep(1.0 - across)) : 1.0;
+        double meanderScour = 1.0;
+        if (across < 1.0 && rs.isWater() && dt > 0.18) {
+            // Meander along the channel's local normal: the phase advances with distance travelled
+            // downstream, and the amplitude fades out on narrow channels, so mountain streams stay
+            // straight and only lowland trunk rivers wander. meander_strength is a real slider.
+            double alongFlow = x * rs.flowX() + z * rs.flowZ();
+            double wavelength = Math.max(24.0, rs.width() * 16.0);
+            double phase = alongFlow / wavelength * 2.0 * Math.PI + (seed & 0xFFFF) * 1e-4;
+            meanderScour = 1.0 + 0.45 * s.meanderStrength() * Math.sin(phase)
+                    * clamp(rs.width() / 24.0);
+        }
+        double riverBed = RIVER_BED_DEPTH * depthScale * size * channelProfile * bankFalloff * meanderScour;
         double riverPlane = RIVER_BED_DEPTH * depthScale * size * channelPresence;
-        double lakeProfile = sstep(clamp((d.lake() - 0.15) / 0.85));
+        double lakeProfile = sstep(clamp((rs.lake() - 0.15) / 0.85));
         double lakeBed = LAKE_BED_DEPTH * depthScale * lakeProfile;
         double river = channelProfile;
         double lake = lakeProfile;
@@ -325,14 +342,19 @@ public final class TerrainModel {
         double waterLevel = h0
                 - riverPlane * (1.0 - RIVER_WATER_FILL)
                 - lakeBed * (1.0 - LAKE_WATER_FILL);
+        // Dry ground is an explicit state, not a height. If the hydrology says there is no water on
+        // this column, the carve is not allowed to invent any: drop the level below the world.
+        if (rs.waterBody() == com.cokedoutsnail.realisticterrain.worldgen.hydro.WaterBodyType.NONE) {
+            waterLevel = Double.NEGATIVE_INFINITY;
+        }
         double inlandWater = Math.max(s.seaLevel(), waterLevel);
         // A closed basin's real water level is its spill elevation, which the regional solver knows
         // and this height model does not. Using it is what makes an endorheic lake fill to its rim
         // instead of leaking away or overflowing it. The guard keeps the extra water out of shallow
         // dips that only the erosion delta lowered, which would otherwise leave a film of water
         // lying over dry land.
-        if (lakeProfile > 0.5 && d.waterSurface() > h + 2.0) {
-            inlandWater = Math.max(inlandWater, d.waterSurface());
+        if (lakeProfile > 0.5 && rs.waterSurface() > h + 2.0) {
+            inlandWater = Math.max(inlandWater, rs.waterSurface());
         }
 
         // Low-frequency value-noise fbm, stretched by CLIMATE_NORM so its warm/cold and wet/dry

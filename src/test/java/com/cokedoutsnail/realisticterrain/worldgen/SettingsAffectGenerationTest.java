@@ -205,8 +205,8 @@ final class SettingsAffectGenerationTest {
         double lake = 0, wetland = 0;
         for (int z = -4000; z <= 4000; z += 250) {
             for (int x = -4000; x <= 4000; x += 250) {
-                com.cokedoutsnail.realisticterrain.worldgen.hydro.Drainage.Cell c =
-                        com.cokedoutsnail.realisticterrain.worldgen.hydro.Drainage.sample(x + 0.5, z - 0.5, SEED, s);
+                com.cokedoutsnail.realisticterrain.worldgen.hydro.RiverSample c =
+                        com.cokedoutsnail.realisticterrain.worldgen.hydro.HydrologyManager.sample(x + 0.5, z - 0.5, SEED, s);
                 lake += c.lake();
                 wetland += c.wetland();
             }
