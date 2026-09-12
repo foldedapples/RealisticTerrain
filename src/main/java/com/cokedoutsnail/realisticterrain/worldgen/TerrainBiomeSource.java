@@ -16,16 +16,19 @@ import java.util.Map;
 import java.util.stream.Stream;
 
 /**
- * A biome source that picks vanilla biomes directly from the same {@link TerrainModel} that
- * builds the terrain, so deserts, forests, tundra and alpine meadows sit where the custom
- * mountains, rivers and climate actually are. The vanilla multi-noise sampler (which the old
- * scaled source used) reads vanilla height/erosion noise that has nothing to do with this
- * terrain, so biomes used to land on the wrong mountains and valleys.
+ * Turns the authoritative {@link TerrainBiomeClassifier} result into a vanilla biome.
  *
- * <p>The world seed used by {@link TerrainModel} is not exposed to biome sources, so the chunk
- * generator feeds it in through {@link #setTerrainSeed(long)} at populateNoise time (the first
- * thing that runs for every chunk). Before that the source falls back to a fixed salt, which
- * only matters for the brief window before worldgen starts.
+ * <p>The source classifies nothing itself any more. It samples the same {@link TerrainModel} at the
+ * same real world coordinates the chunk generator uses - biome scale is applied inside the model's
+ * climate fields, never by dividing the sample coordinates - and hands the column to the classifier.
+ * Because the generator's surface resolver reads the same classifier, the biome on a column and the
+ * blocks in it cannot disagree.
+ *
+ * <p>The world seed comes from the generator-owned {@link TerrainContext}, which
+ * {@code RealisticChunkGenerator} attaches in its constructor and initializes from {@code NoiseConfig}
+ * before any biome sampling (see {@code createStructurePlacementCalculator} and
+ * {@code populateBiomes}). There is no fallback seed and no mutable per-chunk setter: reading a biome
+ * from an unattached source is a programming error, not a silently wrong world.
  */
 public final class TerrainBiomeSource extends BiomeSource {
     // See RealisticChunkGenerator.CODEC: Mojang and DataFixerUpper ship no null annotations, so the
@@ -44,7 +47,8 @@ public final class TerrainBiomeSource extends BiomeSource {
     private Map<Identifier, RegistryEntry<Biome>> byId;
     private RegistryEntry<Biome> defaultBiome;
     private volatile boolean biomeLookupReady;
-    private long terrainSeed = 0x5245414C49535449L; // transient; overwritten by the chunk generator
+    // Owned by the chunk generator; supplies the same world-derived seed the terrain uses.
+    private volatile TerrainContext terrainContext;
 
     public TerrainBiomeSource(BiomeSource fallback, float scale, TerrainSettings settings) {
         this.fallback = fallback;
@@ -99,8 +103,13 @@ public final class TerrainBiomeSource extends BiomeSource {
         return new TerrainBiomeSource(fallback, newSettings.biomeScale(), newSettings);
     }
 
-    public void setTerrainSeed(long seed) {
-        this.terrainSeed = seed;
+    /**
+     * Attaches the generator-owned terrain seed context. Called once by the chunk generator's
+     * constructor; the seed itself has no public setter, because that mutable per-chunk design is
+     * exactly what Phase 1 removed.
+     */
+    public void attachContext(TerrainContext context) {
+        this.terrainContext = context;
     }
 
     @Override
@@ -114,89 +123,48 @@ public final class TerrainBiomeSource extends BiomeSource {
     }
 
     @Override
-    public RegistryEntry<Biome> getBiome(int biomeX, int biomeY, int biomeZ, MultiNoiseUtil.MultiNoiseSampler sampler) {
+    public RegistryEntry<Biome> getBiome(int biomeX, int biomeY, int biomeZ,
+            MultiNoiseUtil.MultiNoiseSampler sampler) {
         ensureBiomeLookup();
-        double x = biomeX * 4.0 / scale;
-        double z = biomeZ * 4.0 / scale;
-        return pick(x, z, TerrainModel.sample(terrainSeed, x, z, settings));
+        TerrainContext ctx = terrainContext;
+        if (ctx == null) {
+            throw new IllegalStateException("TerrainBiomeSource is not attached to a terrain context; "
+                    + "it must be driven by RealisticChunkGenerator");
+        }
+        long seed = ctx.seed();
+        // Real world coordinates: never divide by the biome scale here. The scale is a property of
+        // the climate fields inside TerrainModel, so moving the sample would classify a different
+        // physical column than the one the chunk generator actually builds.
+        double x = biomeX * 4.0;
+        double z = biomeZ * 4.0;
+        TerrainModel.Sample sample = TerrainModel.sample(seed, x, z, settings);
+        TerrainBiomeType type = TerrainBiomeClassifier.classify(seed, x, z, settings, sample, scale);
+        return biome(keyFor(type));
     }
 
-    private RegistryEntry<Biome> pick(double x, double z, TerrainModel.Sample s) {
-        double h = s.height();
-        double water = s.waterLevel();
-        double m = s.moisture();
-        double t = s.temperature();
-
-        // Water, depth ordered: rivers/lakes first, then open water by depth.
-        if (h < water) {
-            if (s.river() > 0.25 || s.lake() > 0.3) return biome(BiomeKeys.RIVER);
-            double depth = water - h;
-            // Mid-ocean ridges and rift trenches stay abyssal even when shallow.
-            if (depth > 26 || (s.divergent() > 0.6 && depth > 10)) return biome(BiomeKeys.DEEP_OCEAN);
-            if (depth > 4) return biome(BiomeKeys.OCEAN);
-            return biome(BiomeKeys.BEACH);
-        }
-        // Coastal fringe. Gating this on raw height alone - "within N blocks of sea level" - turned
-        // every inland flat that happened to sit near sea level (a wide plain, the floor of a rift
-        // valley, the apron below a range) into beach as well, because at these terrain scales a
-        // great deal of ordinary low ground sits within a few blocks of sea level without being
-        // anywhere near the coast. Continentalness is the field the coastline is actually drawn
-        // from (see TerrainModel#tectonicBase), so gating on genuine proximity to the coast line in
-        // THAT field - not the derived height - is what confines beach to the coast itself, the way
-        // ReTerraForged's COAST control point does.
-        // Symmetric proximity, and deliberately the same expression the chunk generator's beach band
-        // uses, so the biome and the blocks under it can never disagree. The old one-sided test
-        // (`continent - coastLine < 0.05`) was also true for the whole ocean side of the field, so any
-        // low-lying land whose continentalness sat below the coast line - an uplifted shelf, a river
-        // mouth, the floor of a rift - was reported as beach too.
-        boolean nearCoastline = Math.abs(s.continent() - settings.coastLine()) < 0.05;
-        if (nearCoastline && h < settings.seaLevel() + 5) return biome(BiomeKeys.BEACH);
-
-        // Tectonic refinements.
-        boolean riftValley = s.divergent() > 0.55 && h < settings.seaLevel() + 70; // damp rift corridor
-        boolean faulted = s.fault() > 0.55; // rocky, harsh active zone
-
-        boolean cold = t < -0.2;
-        boolean hot = t > 0.25;
-        boolean wet = m > 0.15;
-        boolean dry = m < -0.1;
-
-        // Altitude bands: tundra, alpine scrub and tree line.
-        if (h > settings.snowLine() + 130) return biome(BiomeKeys.SNOWY_SLOPES);
-        if (h > settings.snowLine() + 30) return cold ? biome(BiomeKeys.SNOWY_SLOPES) : biome(BiomeKeys.MEADOW);
-        if (h > settings.snowLine() - 60) return cold ? biome(BiomeKeys.GROVE) : biome(BiomeKeys.MEADOW);
-
-        // Rift valleys hold moisture and lush vegetation despite the altitude.
-        if (riftValley) {
-            if (cold) return biome(BiomeKeys.TAIGA);
-            return wet ? biome(BiomeKeys.FOREST) : biome(BiomeKeys.PLAINS);
-        }
-
-        // Lowland climate zones, with smooth ecotone blending at boundaries so the 4-block
-        // biome lattice never produces a hard, stepped chunk border.
-        if (cold) return wet ? biome(BiomeKeys.TAIGA) : biome(BiomeKeys.SNOWY_PLAINS);
-        if (hot) {
-            if (wet) return biome(BiomeKeys.JUNGLE);
-            if (dry) return biome(BiomeKeys.DESERT);
-            return biome(BiomeKeys.SAVANNA);
-        }
-        if (wet) return ecotone(0.28, 0.34, m, x, z) ? biome(BiomeKeys.DARK_FOREST) : biome(BiomeKeys.FOREST);
-        if (dry) return biome(BiomeKeys.PLAINS);
-        if (faulted) return biome(BiomeKeys.WINDSWEPT_SAVANNA); // sparse, rocky
-        return biome(BiomeKeys.BIRCH_FOREST);
-    }
-
-    /**
-     * Smoothly picks the "rich" side of a climate threshold over a transition band. Within the
-     * band a micro-jitter field decides, so neighbouring 4-block cells blend instead of lining up
-     * into a hard border.
-     */
-    private boolean ecotone(double lo, double hi, double v, double x, double z) {
-        if (v < lo) return false;
-        if (v > hi) return true;
-        double t = (v - lo) / (hi - lo);
-        double jitter = 0.5 + 0.5 * com.cokedoutsnail.realisticterrain.noise.Noise2D.value(x / 6.0, z / 6.0, terrainSeed + 907);
-        return jitter < t;
+    /** The single, explicit mapping from a pure classification to a vanilla biome key. */
+    private static RegistryKey<Biome> keyFor(TerrainBiomeType type) {
+        return switch (type) {
+            case DEEP_OCEAN -> BiomeKeys.DEEP_OCEAN;
+            case OCEAN -> BiomeKeys.OCEAN;
+            // Vanilla has no lake biome; an inland lake reads as river water when standing in it.
+            case RIVER, LAKE -> BiomeKeys.RIVER;
+            case BEACH -> BiomeKeys.BEACH;
+            case DESERT -> BiomeKeys.DESERT;
+            case SAVANNA -> BiomeKeys.SAVANNA;
+            case PLAINS -> BiomeKeys.PLAINS;
+            case FOREST -> BiomeKeys.FOREST;
+            case DARK_FOREST -> BiomeKeys.DARK_FOREST;
+            case BIRCH_FOREST -> BiomeKeys.BIRCH_FOREST;
+            case JUNGLE -> BiomeKeys.JUNGLE;
+            case SWAMP -> BiomeKeys.SWAMP;
+            case TAIGA -> BiomeKeys.TAIGA;
+            case SNOWY_PLAINS -> BiomeKeys.SNOWY_PLAINS;
+            case GROVE -> BiomeKeys.GROVE;
+            case MEADOW -> BiomeKeys.MEADOW;
+            case SNOWY_SLOPES -> BiomeKeys.SNOWY_SLOPES;
+            case STONY_PEAKS -> BiomeKeys.STONY_PEAKS;
+        };
     }
 
     private RegistryEntry<Biome> biome(RegistryKey<Biome> key) {

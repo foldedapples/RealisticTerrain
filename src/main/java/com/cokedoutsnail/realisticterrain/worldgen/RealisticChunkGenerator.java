@@ -9,7 +9,9 @@ import net.minecraft.registry.DynamicRegistryManager;
 import net.minecraft.registry.Registry;
 import net.minecraft.registry.RegistryKey;
 import net.minecraft.registry.RegistryKeys;
+import net.minecraft.registry.RegistryWrapper;
 import net.minecraft.registry.entry.RegistryEntry;
+import net.minecraft.structure.StructureSet;
 import net.minecraft.structure.StructureTemplateManager;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.math.BlockPos;
@@ -39,7 +41,6 @@ import net.minecraft.util.math.random.Random;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.atomic.AtomicLong;
 
 public final class RealisticChunkGenerator extends ChunkGenerator {
     public static final int MIN_Y=-64, MAX_Y=2031, WORLD_HEIGHT=2096;
@@ -69,59 +70,68 @@ public final class RealisticChunkGenerator extends ChunkGenerator {
     ).apply(i, RealisticChunkGenerator::new));
 
     private final TerrainSettings settings;
-    // The terrain seed is derived once from NoiseConfig (deterministic per world) and reused for
-    // both terrain sampling and biome sampling, so chunks and features stay perfectly aligned.
-    // Atomic because populateNoise runs concurrently on chunk worker threads (benign, the derived
-    // value is identical on every thread - the CAS just makes the write-once cache race-free).
-    private final AtomicLong cachedTerrainSeed = new AtomicLong(Long.MIN_VALUE);
+    // The one terrain seed context, owned by this generator and shared with its biome source. It is
+    // initialized from NoiseConfig once (see createStructurePlacementCalculator) - before any biome
+    // or terrain sampling - so no stage can ever observe an unseeded fallback. See TerrainContext.
+    private final TerrainContext terrainContext = new TerrainContext();
 
-    public RealisticChunkGenerator(BiomeSource biomeSource, TerrainSettings settings){ super(biomeSource); this.settings=settings; }
+    public RealisticChunkGenerator(BiomeSource biomeSource, TerrainSettings settings){
+        super(biomeSource);
+        this.settings=settings;
+        // Hand the biome source the very same context, so biome classification and terrain sampling
+        // read one seed rather than two independent guesses.
+        if(biomeSource instanceof TerrainBiomeSource tbs) tbs.attachContext(terrainContext);
+    }
     public TerrainSettings settings(){ return settings; }
     @Override protected MapCodec<? extends ChunkGenerator> getCodec(){ return CODEC; }
     @Override public int getSeaLevel(){ return settings.seaLevel(); }
     @Override public int getMinimumY(){ return MIN_Y; }
     @Override public int getWorldHeight(){ return WORLD_HEIGHT; }
 
+    /**
+     * Derives and caches the world's terrain seed from its noise configuration. Minecraft builds the
+     * world's NoiseConfig once per world, and every stage that receives it derives the identical
+     * value, so this is safe to call from any stage, on any thread, in any order.
+     */
     private long terrainSeed(NoiseConfig noiseConfig){
-        long s = cachedTerrainSeed.get();
-        if (s == Long.MIN_VALUE) {
-            s = noiseConfig.getOrCreateRandomDeriver(com.cokedoutsnail.realisticterrain.RealisticTerrainMod.id("terrain"))
-                    .split(0L).nextLong();
-            cachedTerrainSeed.compareAndSet(Long.MIN_VALUE, s);
-            s = cachedTerrainSeed.get();
-        }
-        return s;
+        return terrainContext.initializeFrom(noiseConfig);
     }
 
-    /** Cached terrain seed for paths without a NoiseConfig (feature generation); set by populateNoise. */
-    private long terrainSeedValue(){
-        long s = cachedTerrainSeed.get();
-        return s == Long.MIN_VALUE ? 0L : s;
+    /**
+     * World-load hook: Minecraft calls this once, from {@code ServerChunkLoadingManager}'s
+     * constructor, with the world seed and the world's NoiseConfig, before any chunk is generated.
+     * Establishing the terrain seed here is what guarantees it exists before both terrain and biome
+     * work - the old design only seeded inside {@code populateNoise}, which runs after biomes.
+     */
+    @Override public StructurePlacementCalculator createStructurePlacementCalculator(
+            RegistryWrapper<StructureSet> structureSetRegistry, NoiseConfig noiseConfig, long seed){
+        terrainSeed(noiseConfig);
+        return super.createStructurePlacementCalculator(structureSetRegistry, noiseConfig, seed);
+    }
+
+    /**
+     * Biome population is its own chunk stage, earlier than noise, so the seed is established here
+     * too - independently of {@code populateNoise}. The registered biome source then classifies each
+     * column with the same world-derived seed the terrain uses.
+     */
+    @Override public CompletableFuture<Chunk> populateBiomes(NoiseConfig noiseConfig, Blender blender,
+            StructureAccessor structures, Chunk chunk){
+        terrainSeed(noiseConfig);
+        return super.populateBiomes(noiseConfig, blender, structures, chunk);
     }
 
     @Override public CompletableFuture<Chunk> populateNoise(Blender blender, NoiseConfig noiseConfig, StructureAccessor structures, Chunk chunk){
         return CompletableFuture.supplyAsync(() -> {
             long seed=terrainSeed(noiseConfig);
-            // The terrain-aware biome source must sample the terrain with the same seed the
-            // terrain itself uses, otherwise biomes would drift away from the real landscape.
-            if(getBiomeSource() instanceof TerrainBiomeSource tbs) tbs.setTerrainSeed(seed);
             ChunkPos cp=chunk.getPos(); BlockPos.Mutable p=new BlockPos.Mutable();
             for(int lx=0;lx<16;lx++) for(int lz=0;lz<16;lz++){
                 int x=cp.getStartX()+lx,z=cp.getStartZ()+lz;
                 TerrainModel.Sample sm=TerrainModel.sample(seed,x,z,settings);
                 int surface=Math.max((int)Math.floor(sm.height()),SURFACE_FLOOR);
                 int waterTop=(int)Math.floor(sm.waterLevel());
-                RegistryEntry<Biome> biome = biomeSource.getBiome(x >> 2, surface >> 2, z >> 2, noiseConfig.getMultiNoiseSampler());
-                boolean cold=biome.value().getTemperature() < 0.15F || sm.temperature() < -.2;
-                boolean wet=biome.value().hasPrecipitation() || sm.moisture()>.15;
-                // Sand belongs to the coast and to genuine desert, and to nowhere else. Both flags
-                // mirror the exact branches TerrainBiomeSource picks DESERT and BEACH from, so the
-                // surface block always agrees with the biome standing on it - instead of sand being a
-                // global fallback (the all-sand world) or, as it was, absent from every dry surface
-                // because land fell straight through to coarse dirt.
-                boolean desert = sm.temperature() > 0.25 && sm.moisture() < -0.1;
-                boolean beach = Math.abs(sm.continent() - settings.coastLine()) < 0.05
-                        && sm.height() < settings.seaLevel() + 5;
+                // One authoritative classification - the very same value the biome source stores in
+                // the chunk. There is no second desert/beach test here any more.
+                TerrainBiomeType biome=TerrainBiomeClassifier.classify(seed,x,z,settings,sm);
                 int top=Math.max(surface,waterTop);
                 for(int y=MIN_Y;y<=top;y++){
                     BlockState state;
@@ -131,7 +141,7 @@ public final class RealisticChunkGenerator extends ChunkGenerator {
                     if(y<=CRUST_TOP) state = y==MIN_Y?Blocks.BEDROCK.getDefaultState():Blocks.DEEPSLATE.getDefaultState();
                     else if(y>surface) state = y<=waterTop?Blocks.WATER.getDefaultState():Blocks.AIR.getDefaultState();
                     else if(TerrainModel.cave(seed,x,y,z,settings) && y<surface-7) state= y<settings.seaLevel()-18?Blocks.WATER.getDefaultState():Blocks.AIR.getDefaultState();
-                    else state=baseState(seed,x,z,surface,y,sm,cold,wet,desert,beach);
+                    else state=blockFor(seed,x,z,surface,y,sm,biome);
                     chunk.setBlockState(p.set(x,y,z),state,0);
                 }
             }
@@ -140,74 +150,45 @@ public final class RealisticChunkGenerator extends ChunkGenerator {
         }, Util.getMainWorkerExecutor());
     }
 
-    private BlockState baseState(long seed,int x,int z,int surface,int y,TerrainModel.Sample sm,boolean cold,boolean wet,boolean desert,boolean beach){
-        int depth=surface-y;
-        // Beach and channel-bed test. This MUST be read off the continuous submersion depth, never
-        // off `surface - waterTop`: both of those are floored to an integer y, so their difference is
-        // quantised and the width of the beach band in blocks then depended on which way the water
-        // surface had last been floored. That is what painted the concentric stair-step rings of sand
-        // and gravel along every river and shoreline. `waterLevel` and `height` here are still
-        // full-precision doubles straight out of the terrain model - the only floor in the entire
-        // pipeline is the one that places a block - and the jitter keeps the shoreline off a ruler.
-        boolean submerged = sm.waterLevel()-sm.height() > (pseudo(x,z)-0.5)*1.4 - 2.0;
-        // Water-bearing beds: beaches, river/lake floors, sandbars.
-        if(submerged){
-            if(sm.river()>.25 && depth==0) return Blocks.GRAVEL.getDefaultState();
-            if(depth==0) return Blocks.SAND.getDefaultState();
-            if(depth==1) return Blocks.SANDSTONE.getDefaultState();
-            return Blocks.STONE.getDefaultState();
-        }
-        // Snowline.
-        // Snowline: a soft climatic blend rather than a horizontal cutoff. Altitude carries most of it,
-        // climate carries the rest (cold biomes snow lower), steep exposed faces hold less snow than
-        // sheltered ones, and the per-column hash makes the edge ragged. The rule itself lives in
-        // TerrainModel so it has one definition and can be tested without a live world.
-        if(depth==0 && TerrainModel.snowCover(x, z, surface, settings, sm, cold) >= 0.5) {
-            return Blocks.SNOW_BLOCK.getDefaultState();
-        }
-        // Exposed bedrock on steep, high, ridged slopes (scree, peaks).
-        if(sm.ridge()>.72 && sm.slopeHint()>.42) return Blocks.STONE.getDefaultState();
-        // Dry sand, restricted to the coast and to real desert. The coastal arm only needs a small
-        // jittered band so the shore reads as a beach rather than a carpet: `(pseudo - 0.5)` is a
-        // deterministic per-column value in [-0.5, 0.5], so it puts sand up to ~3 blocks inland of the
-        // coastline contour and tapers it out. Desert is the genuine biome (hot AND dry, exactly the
-        // branch TerrainBiomeSource uses), so the sand there is a desert floor with sandstone under
-        // it - and because `desert`/`beach` are false everywhere else, no other biome can turn to sand.
-        boolean coastal = beach && sm.continent() < settings.coastLine() + 0.02 + (pseudo(x,z)-0.5)*0.03;
-        if(depth==0 && desert) return Blocks.SAND.getDefaultState();
-        if(depth>0 && depth<=4 && desert) return Blocks.SANDSTONE.getDefaultState();
-        if(depth==0 && coastal) return Blocks.SAND.getDefaultState();
-        if(depth==1 && coastal) return Blocks.SANDSTONE.getDefaultState();
-
-        // --- Geological rock strata ---
-        // 1. Igneous intrusion near active plate margins (faults).
-        if(sm.fault()>.45 && depth<40){
-            if(y<settings.seaLevel()-40 && sm.fault()>.7) return Blocks.BASALT.getDefaultState();
-            double mix=Noise2D.value((x + y*.30)/23.0,(z - y*.20)/23.0,seed+991);
-            return mix>.5?Blocks.GRANITE.getDefaultState():Blocks.DIORITE.getDefaultState();
-        }
-        // 2. Deep basement rock.
-        if(y < settings.seaLevel()-160) return Blocks.DEEPSLATE.getDefaultState();
-        // 3. Canyon/exposed walls show sedimentary banding.
-        if(depth>8 && sm.slopeHint()>.25){
-            double band=Noise2D.value(x/17.0,(z + y*1.25)/17.0,seed+1009);
-            return band>0.15?Blocks.SANDSTONE.getDefaultState():Blocks.STONE.getDefaultState();
-        }
-        // 4. Surface and subsoil (soil depth from hydraulic erosion).
-        // Rich soil (high values) → deep dirt/grass (lush biomes, fertile valleys).
-        // Stripped soil (low values) → exposed rock/gravel (scree, peaks, eroded canyon walls).
-        double soil = sm.soil();
-        int soilDepth = (int)(soil * 5.0); // 0-5 blocks of soil
-        if(depth==0){
-            if(soil < 0.15 && sm.slopeHint() > 0.3) return Blocks.GRAVEL.getDefaultState(); // scree
-            if(soil < 0.3) return Blocks.STONE.getDefaultState(); // exposed bedrock
-            return wet?Blocks.GRASS_BLOCK.getDefaultState():Blocks.COARSE_DIRT.getDefaultState();
-        }
-        if(depth <= soilDepth) return wet?Blocks.DIRT.getDefaultState():Blocks.COARSE_DIRT.getDefaultState();
-        if(depth <= soilDepth + 1) return Blocks.DIRT.getDefaultState(); // transition layer
-        return Blocks.STONE.getDefaultState();
+    /**
+     * The block at one column position, resolved by the single authoritative surface resolver. Both
+     * this pass and {@link #getColumnSample} call it, so the blocks a chunk is built from and the
+     * blocks a query reports can never disagree.
+     */
+    private BlockState blockFor(long seed,int x,int z,int surface,int y,TerrainModel.Sample sm,TerrainBiomeType biome){
+        SurfaceMaterial material=TerrainSurfaceResolver.resolve(
+                new TerrainSurfaceResolver.SurfaceContext(biome,sm,surface,y,x,z,seed,settings));
+        return stateFor(material);
     }
-    private static double pseudo(int a,int b){ long h=(a*0x9E3779B97F4A7C15L)^(b*0xC2B2AE3D27D4EB4FL); h^=h>>>29; return (h&0xffff)/65535.0; }
+
+    /** The single mapping from a pure {@link SurfaceMaterial} to a vanilla block state. */
+    private static BlockState stateFor(SurfaceMaterial material){
+        return switch(material){
+            case BEDROCK -> Blocks.BEDROCK.getDefaultState();
+            case DEEPSLATE -> Blocks.DEEPSLATE.getDefaultState();
+            case STONE -> Blocks.STONE.getDefaultState();
+            case GRAVEL -> Blocks.GRAVEL.getDefaultState();
+            case SAND -> Blocks.SAND.getDefaultState();
+            case SANDSTONE -> Blocks.SANDSTONE.getDefaultState();
+            case RED_SAND -> Blocks.RED_SAND.getDefaultState();
+            case RED_SANDSTONE -> Blocks.RED_SANDSTONE.getDefaultState();
+            case CLAY -> Blocks.CLAY.getDefaultState();
+            case MUD -> Blocks.MUD.getDefaultState();
+            case GRASS_BLOCK -> Blocks.GRASS_BLOCK.getDefaultState();
+            case DIRT -> Blocks.DIRT.getDefaultState();
+            case COARSE_DIRT -> Blocks.COARSE_DIRT.getDefaultState();
+            case PODZOL -> Blocks.PODZOL.getDefaultState();
+            case MOSS_BLOCK -> Blocks.MOSS_BLOCK.getDefaultState();
+            case SNOW_BLOCK -> Blocks.SNOW_BLOCK.getDefaultState();
+            case ICE -> Blocks.ICE.getDefaultState();
+            case WATER -> Blocks.WATER.getDefaultState();
+            case AIR -> Blocks.AIR.getDefaultState();
+            case BASALT -> Blocks.BASALT.getDefaultState();
+            case GRANITE -> Blocks.GRANITE.getDefaultState();
+            case DIORITE -> Blocks.DIORITE.getDefaultState();
+            case TERRACOTTA -> Blocks.TERRACOTTA.getDefaultState();
+        };
+    }
 
     @Override public int getHeight(int x,int z,Heightmap.Type type,HeightLimitView world,NoiseConfig noiseConfig){
         TerrainModel.Sample sample=TerrainModel.sample(terrainSeed(noiseConfig),x,z,settings);
@@ -223,32 +204,17 @@ public final class RealisticChunkGenerator extends ChunkGenerator {
         int terrainTop=Math.max((int)Math.floor(sample.height()),SURFACE_FLOOR)+1;
         int waterTop=(int)Math.floor(sample.waterLevel())+1;
         int top=Math.max(terrainTop,waterTop); BlockState[] states=new BlockState[top-MIN_Y];
-        // Same continuous test as baseState: computing it from the floored terrainTop/waterTop pair
-        // is what made the beach band step, and this column sample is what spawn placement and
-        // feature generation read.
-        boolean submerged=sample.waterLevel()-sample.height() > (pseudo(x,z)-0.5)*1.4 - 2.0;
-        // Kept in lockstep with baseState: the column sample is what spawn placement and feature
-        // generation read, so a desert or a dry beach has to report the same sand here too.
-        boolean desert = sample.temperature() > 0.25 && sample.moisture() < -0.1;
-        boolean coastal = Math.abs(sample.continent()-settings.coastLine()) < 0.05
-                && sample.height() < settings.seaLevel()+5
-                && sample.continent() < settings.coastLine() + 0.02 + (pseudo(x,z)-0.5)*0.03;
+        // One classification, then the one shared resolver - this column sample is what spawn
+        // placement and feature generation read, so it reports exactly the blocks populateNoise wrote.
+        TerrainBiomeType biome=TerrainBiomeClassifier.classify(seed,x,z,settings,sample);
+        int surface=Math.max((int)Math.floor(sample.height()),SURFACE_FLOOR);
         for(int y=MIN_Y;y<top;y++){
             BlockState st;
             // Same guaranteed crust as populateNoise: this column sample is what spawn placement
             // and feature generation read, so it must never report a missing floor either.
             if(y<=CRUST_TOP) st=y==MIN_Y?Blocks.BEDROCK.getDefaultState():Blocks.DEEPSLATE.getDefaultState();
             else if(y>=terrainTop) st=y<waterTop?Blocks.WATER.getDefaultState():Blocks.AIR.getDefaultState();
-            else if(y<settings.seaLevel()-160) st=Blocks.DEEPSLATE.getDefaultState();
-            else if(submerged && y==terrainTop-1) st=Blocks.SAND.getDefaultState();
-            else if(submerged && y>=terrainTop-3) st=Blocks.SANDSTONE.getDefaultState();
-            else if(!submerged && desert && y==terrainTop-1) st=Blocks.SAND.getDefaultState();
-            else if(!submerged && desert && y>=terrainTop-5) st=Blocks.SANDSTONE.getDefaultState();
-            else if(!submerged && coastal && y==terrainTop-1) st=Blocks.SAND.getDefaultState();
-            else if(!submerged && coastal && y==terrainTop-2) st=Blocks.SANDSTONE.getDefaultState();
-            else if(y>=terrainTop-1) st=Blocks.GRASS_BLOCK.getDefaultState();
-            else if(y>=terrainTop-4) st=Blocks.DIRT.getDefaultState();
-            else st=Blocks.STONE.getDefaultState();
+            else st=blockFor(seed,x,z,surface,y,sample,biome);
             states[y-MIN_Y]=st;
         }
         return new VerticalBlockSample(MIN_Y,states);
@@ -292,9 +258,9 @@ public final class RealisticChunkGenerator extends ChunkGenerator {
         super.generateFeatures(world, chunk, structureAccessor);
         stripIsolatedSprings(world, chunk);
         if(settings.vegetationDensity() <= 0.02f) return;
-        long seed=terrainSeedValue();
-        // Fallback before any noise chunk ran; still deterministic per world.
-        if(seed==0L) seed=world.getSeed() ^ 0x5245414C49535449L;
+        // The context is established from NoiseConfig before any chunk stage runs, so this never
+        // guesses: generation order cannot change which seed the forest is planted with.
+        long seed=terrainContext.seed();
         ChunkPos cp=chunk.getPos();
         Random random=Random.create(world.getSeed() ^ (cp.x*0x9E3779B97F4A7C15L) ^ (cp.z*0xC2B2AE3D27D4EB4FL) ^ 0x5245414CL);
         DynamicRegistryManager registries=world.getRegistryManager();
@@ -303,7 +269,8 @@ public final class RealisticChunkGenerator extends ChunkGenerator {
             int x=cp.getStartX()+lx, z=cp.getStartZ()+lz;
             TerrainModel.Sample sm=TerrainModel.sample(seed,x,z,settings);
             double slope=TerrainModel.geomorphSlope(seed,x,z,settings);
-            Identifier species=treeSpecies(sm,settings,slope);
+            TerrainBiomeType biome=TerrainBiomeClassifier.classify(seed,x,z,settings,sm);
+            Identifier species=treeSpecies(biome,sm,settings,slope);
             if(species==null) continue;
             // Flat valley floors hold dense forest; steep walls and peaks hold none. The rule itself
             // lives in TerrainModel so the density slider has one definition and can be tested.
@@ -353,32 +320,29 @@ public final class RealisticChunkGenerator extends ChunkGenerator {
                 && !world.getBlockState(n.set(x,y,z-1)).isOf(Blocks.WATER);
     }
 
-    /** Chooses a vanilla tree placed-feature id (or null for no tree) from terrain climate, slope and soil. */
-    private static Identifier treeSpecies(TerrainModel.Sample sm,TerrainSettings s,double slope){
+    /** Chooses a vanilla tree placed-feature id (or null for no tree) from the column's biome and soil. */
+    private static Identifier treeSpecies(TerrainBiomeType biome,TerrainModel.Sample sm,TerrainSettings s,double slope){
         double h=sm.height(), w=sm.waterLevel();
         if(h<w+2) return null;                            // below the waterline
-        if(sm.river()>0.2 || sm.lake()>0.2) return null;  // in a channel or lake
         if(slope>0.62) return null;                       // steep canyon walls / scree / peaks
         if(h>s.snowLine()+40) return null;                // above the tree line
         // Stripped soil (eroded slopes, scree): no trees even where the climate would allow them.
         if(sm.soil() < 0.3) return null;
-        double m=sm.moisture(), t=sm.temperature();
         // Rich deposited soil triggers lush forests where the climate is warm and wet enough.
         boolean fertile = sm.soil() > 0.65;
-        if(t<-.2){
-            if(m<-.1) return null;
-            return Identifier.ofVanilla("trees_taiga");
-        }
-        if(t>.35 && m>.1) return fertile
-                ? Identifier.ofVanilla("trees_jungle")
-                : Identifier.ofVanilla("trees_sparse_jungle");
-        if(m>.25) return t>.25
-                ? Identifier.ofVanilla("trees_birch")
-                : Identifier.ofVanilla("trees_birch_and_oak_leaf_litter");
-        if(m>.12) return Identifier.ofVanilla("trees_birch_and_oak_leaf_litter");
-        if(m<-.15) return null; // desert
-        if(t>.3) return Identifier.ofVanilla("trees_savanna");
-        return Identifier.ofVanilla("trees_plains");
+        return switch(biome){
+            case DESERT, BEACH, SNOWY_PLAINS, SNOWY_SLOPES, STONY_PEAKS, RIVER, LAKE,
+                 OCEAN, DEEP_OCEAN -> null;
+            case JUNGLE -> fertile
+                    ? Identifier.ofVanilla("trees_jungle")
+                    : Identifier.ofVanilla("trees_sparse_jungle");
+            case SWAMP -> Identifier.ofVanilla("swamp_oak");
+            case TAIGA, GROVE -> Identifier.ofVanilla("trees_taiga");
+            case SAVANNA -> Identifier.ofVanilla("trees_savanna");
+            case PLAINS, MEADOW -> Identifier.ofVanilla("trees_plains");
+            case FOREST, DARK_FOREST -> Identifier.ofVanilla("trees_birch_and_oak_leaf_litter");
+            case BIRCH_FOREST -> Identifier.ofVanilla("trees_birch");
+        };
     }
     @Override public void appendDebugHudText(List<String> text,NoiseConfig noiseConfig,BlockPos pos){ TerrainModel.Sample s=TerrainModel.sample(terrainSeed(noiseConfig),pos.getX(),pos.getZ(),settings); text.add(String.format("Realistic Terrain h=%.1f river=%.2f ridge=%.2f",s.height(),s.river(),s.ridge())); }
 }
