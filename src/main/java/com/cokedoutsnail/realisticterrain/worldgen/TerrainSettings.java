@@ -8,7 +8,6 @@ import com.mojang.serialization.MapLike;
 import com.mojang.serialization.RecordBuilder;
 
 import java.util.List;
-import java.util.Locale;
 
 /**
  * Every tunable the terrain engine reads, stored as one dense array indexed by
@@ -70,6 +69,7 @@ public final class TerrainSettings {
     }
 
     /** Builds settings from a raw array already indexed by {@link TerrainSetting#ordinal()}. */
+    @SuppressWarnings("unused")
     private static TerrainSettings fromRaw(double[] values, long seedSalt) {
         double[] v = defaults();
         for (TerrainSetting k : TerrainSetting.values()) {
@@ -115,6 +115,7 @@ public final class TerrainSettings {
                 if (coast != null) v[TerrainSetting.COAST_LINE.ordinal()] = TerrainSetting.COAST_LINE.clamp(coast);
                 if (deep != null) v[TerrainSetting.OCEAN_DEPTH.ordinal()] = TerrainSetting.OCEAN_DEPTH.clamp(deep);
             }
+            @SuppressWarnings({"unchecked", "null"})
             Double salt = number(ops, map.get("seed_salt"));
             // Engine selection (default GEOLOGICAL for old worlds missing the field)
             TerrainEngine eng = TerrainEngine.GEOLOGICAL;

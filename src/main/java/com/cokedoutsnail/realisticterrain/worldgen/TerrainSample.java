@@ -58,16 +58,17 @@ public record TerrainSample(
         return lakeStrength > 0.3;
     }
 
+    @SuppressWarnings({"unchecked", "null"})
     public static final Codec<TerrainSample> CODEC = RecordCodecBuilder.create(i -> i.group(
-            Codec.DOUBLE.fieldOf("elevation").forGetter(TerrainSample::elevation),
-            Codec.DOUBLE.fieldOf("water_level").forGetter(TerrainSample::waterLevel),
-            Codec.DOUBLE.fieldOf("river_strength").forGetter(TerrainSample::riverStrength),
-            Codec.DOUBLE.fieldOf("lake_strength").forGetter(TerrainSample::lakeStrength),
-            Codec.DOUBLE.fieldOf("temperature").forGetter(TerrainSample::temperature),
-            Codec.DOUBLE.fieldOf("moisture").forGetter(TerrainSample::moisture),
-            Codec.DOUBLE.fieldOf("continentalness").forGetter(TerrainSample::continentalness),
-            Codec.DOUBLE.fieldOf("precipitation").forGetter(TerrainSample::precipitation),
-            Codec.INT.fieldOf("backend_status").forGetter(TerrainSample::backendStatus),
-            Codec.DOUBLE.fieldOf("confidence").forGetter(TerrainSample::confidence)
+            Codec.DOUBLE.fieldOf("elevation").forGetter(s -> s.elevation),
+            Codec.DOUBLE.fieldOf("water_level").forGetter(s -> s.waterLevel),
+            Codec.DOUBLE.fieldOf("river_strength").forGetter(s -> s.riverStrength),
+            Codec.DOUBLE.fieldOf("lake_strength").forGetter(s -> s.lakeStrength),
+            Codec.DOUBLE.fieldOf("temperature").forGetter(s -> s.temperature),
+            Codec.DOUBLE.fieldOf("moisture").forGetter(s -> s.moisture),
+            Codec.DOUBLE.fieldOf("continentalness").forGetter(s -> s.continentalness),
+            Codec.DOUBLE.fieldOf("precipitation").forGetter(s -> s.precipitation),
+            Codec.INT.fieldOf("backend_status").forGetter(s -> s.backendStatus),
+            Codec.DOUBLE.fieldOf("confidence").forGetter(s -> s.confidence)
     ).apply(i, TerrainSample::new));
 }

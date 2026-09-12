@@ -56,6 +56,7 @@ public final class OnnxModel implements AutoCloseable {
             Object opts = sessionClass.getClassLoader()
                     .loadClass("ai.onnxruntime.OrtSession$SessionOptions")
                     .getConstructor().newInstance();
+            if (opts == null) throw new IllegalStateException("Failed to create ONNX session options");
             opts.getClass().getMethod("setOptimizationLevel", int.class).invoke(opts, 2);
             this.session = createSessionMethod.invoke(env, modelBytes, opts);
             long elapsed = System.currentTimeMillis() - start;
