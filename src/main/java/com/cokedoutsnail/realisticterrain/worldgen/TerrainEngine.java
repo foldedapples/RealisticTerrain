@@ -32,6 +32,10 @@ public enum TerrainEngine implements StringIdentifiable {
      */
     HYBRID;
 
+    // See RealisticChunkGenerator.CODEC: Mojang's StringIdentifiable carries no null annotations, so
+    // Eclipse null analysis reports the EnumCodec -> Codec<TerrainEngine> widening as an unsafe null
+    // type conversion. createCodec never returns null, so the diagnostic is suppressed at its source.
+    @SuppressWarnings("null")
     public static final Codec<TerrainEngine> CODEC = StringIdentifiable.createCodec(TerrainEngine::values);
 
     @Override

@@ -35,6 +35,9 @@ public final class WorldPipelineModelConfig {
     public static float[] histogramRaw() { return CONFIG.histogramRaw == null ? null : CONFIG.histogramRaw.clone(); }
     public static float dropWaterPercent() { return CONFIG.dropWaterPercent; }
 
+    // Gson ships no null annotations, so fromJson's inferred @NonNull return is reported by Eclipse
+    // null analysis as an unsafe interpretation. validateConfig rejects a null parse below.
+    @SuppressWarnings("null")
     private static ConfigJson loadConfig() {
         try {
             ModelAssetManager.ensureAssetsReady();

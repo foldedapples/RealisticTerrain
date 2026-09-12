@@ -36,6 +36,9 @@ public final class SyntheticMapFactory {
         }
     }
 
+    // Gson ships no null annotations, so fromJson's inferred @NonNull return is reported by Eclipse
+    // null analysis as an unsafe interpretation. A parsed JsonObject is non-null by contract.
+    @SuppressWarnings("null")
     private static synchronized void loadData() {
         if (loaded) return;
         try {
